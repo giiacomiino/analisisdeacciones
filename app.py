@@ -12,9 +12,7 @@ from datetime import datetime
 # CONFIGURACIÓN
 # -----------------------------
 st.set_page_config(page_title="Análisis Integral de Acciones", layout="wide", initial_sidebar_state="expanded")
-GEMINI_API_KEY = "AIzaSyDfeYaLerIkXtNpYCKX-iKWOld0Xt6oFeI"
-genai.configure(api_key=GEMINI_API_KEY)
-
+genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 # -----------------------------
 # FUNCIONES
 # -----------------------------
