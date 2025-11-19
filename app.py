@@ -272,56 +272,64 @@ st.caption("Análisis profesional con Yahoo Finance, Finviz y Gemini AI")
 
 
 # -----------------------------
-# 🔍 SEARCHBAR INTELIGENTE — ANTES DE TODO
+# 🔍 SEARCHBAR INTELIGENTE — TOP 3 RESULTADOS
 # -----------------------------
-st.subheader("🔎 Buscar Empresa / Ticker")
 
-busqueda = st.text_input(
-    "Escribe el nombre de la empresa o el ticker:",
-    placeholder="Ejemplo: Apple, Tesla, Amazon, Coca-Cola..."
-)
+# Si ya hay ticker en sesión, significa que ya estamos analizando → NO mostrar buscador
+modo_analisis_activo = "ticker" in st.session_state and st.session_state["ticker"] is not None
 
-resultados = []
-ticker_seleccionado = None
+if not modo_analisis_activo:
+    st.subheader("🔎 Buscar Empresa / Ticker")
 
-if len(busqueda) >= 2:
-    with st.spinner("Buscando empresas..."):
-        resultados = buscar_empresas_detallado(busqueda)
+    busqueda = st.text_input(
+        "Escribe el nombre de la empresa o el ticker:",
+        placeholder="Ejemplo: Apple, Tesla, Amazon..."
+    )
 
+    resultados = []
 
-# Mostrar tarjetas visuales
-if resultados:
-    st.write("### Resultados encontrados:")
+    # Buscar mientras se escriben mínimo 3 letras
+    if len(busqueda) >= 3:
+        with st.spinner("Buscando empresas..."):
+            resultados = buscar_empresas_detallado(busqueda)
 
-    for item in resultados:
-        col1, col2 = st.columns([1,4])
+        # Limitar a 3 resultados y solo mostrar info básica
+        resultados = resultados[:3]
 
-        with col1:
-            if item["logo"]:
-                st.image(item["logo"], width=60)
-            else:
-                st.write("🗂")
+    # Mostrar resultados
+    if resultados:
+        st.write("### Resultados (Top 3):")
 
-        with col2:
-            st.markdown(f"""
-                **{item['nombre']}**  
-                `{item['ticker']}`  
-                **Precio actual:** {item['precio']} USD  
-                **País:** {item['pais']}
-            """)
+        for item in resultados:
+            nombre = item["nombre"]
+            pais = item["pais"]
+            ticker = item["ticker"]
 
-            # Botón para seleccionar la empresa
-            if st.button(f"Seleccionar {item['ticker']}", key=item['ticker']):
-                ticker_seleccionado = item["ticker"]
-                st.session_state["ticker"] = ticker_seleccionado
+            # Obtener sector desde Yahoo Finance
+            try:
+                sector = yf.Ticker(ticker).info.get("sector", "N/A")
+            except:
+                sector = "N/A"
 
+            col1, col2 = st.columns([4,1])
 
-# Si ya se guardó en sesión, úsalo
-if "ticker" in st.session_state:
-    ticker_final = st.session_state["ticker"]
+            with col1:
+                st.markdown(f"""
+                    **{nombre}**  
+                    📍 País: {pais}  
+                    🏭 Sector: {sector}  
+                    🎫 Ticker: `{ticker}`
+                """)
+
+            with col2:
+                if st.button(f"Seleccionar {ticker}", key=f"sel_{ticker}"):
+                    st.session_state["ticker"] = ticker  # guardar ticker
+                    st.rerun()  # recargar app e iniciar análisis automáticamente
+
 else:
-    ticker_final = "AAPL"   # valor inicial por defecto
-
+    # Si ya estamos analizando una empresa, poner ticker en input y ocultar buscador
+    ticker_final = st.session_state["ticker"]
+    st.text_input("Ticker:", value=ticker_final, disabled=True)
 
 # -----------------------------
 # FILTROS ADICIONALES
