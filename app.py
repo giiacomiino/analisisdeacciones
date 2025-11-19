@@ -689,7 +689,7 @@ Dividend Yield: {info.get('dividendYield')}
 Financial Insight de Yahoo Finance: {financial_insights if financial_insights else "No disponible"}
 
 Genera un análisis profesional en máximo 300 palabras EN {idioma.upper()} con:
-1. Recomendación de inversión (Comprar/Mantener/Vender)
+1. Recomendación de inversión (Comprar/Vender)
 2. Fortalezas clave
 3. Riesgos principales
 4. Valoración actual
