@@ -170,9 +170,14 @@ def calcular_rendimientos_riesgos(ticker, indice_ticker, periodos_config, period
     datos_indice = yf.download(indice_ticker, period=periodo_historico, interval="1d", progress=False)
 
     def extraer_precios(datos):
-        if "Adj Close" in datos.columns:
-            return datos["Adj Close"].astype(float)
-        return datos["Close"].astype(float)
+        if isinstance(datos.columns, pd.MultiIndex):
+            if "Adj Close" in datos.columns.get_level_values(0):
+                return datos["Adj Close"].iloc[:, 0].astype(float)
+            return datos["Close"].iloc[:, 0].astype(float)
+        else:
+            if "Adj Close" in datos.columns:
+                return datos["Adj Close"].astype(float)
+            return datos["Close"].astype(float)
 
     precios_ticker = extraer_precios(datos_ticker).dropna()
     precios_indice = extraer_precios(datos_indice).dropna()
@@ -236,7 +241,7 @@ with st.sidebar:
     
     periodo_historico = st.selectbox(
         "📅 Periodo histórico:",
-        ["1Y", "3Y", "5Y", "10Y", "MAX"],
+        ["1y", "3y", "5y", "10y", "max"],
         index=2,
     )
     
@@ -263,7 +268,8 @@ with st.sidebar:
         ]
     
     st.divider()
-    st.markdown("**v3.3** | Ingeniería Financiera")
+    st.markdown("**v3.4** | Ingeniería Financiera")
+
 # -----------------------------
 # ENCABEZADO PRINCIPAL
 # -----------------------------
@@ -272,11 +278,10 @@ st.caption("Análisis profesional con Yahoo Finance, Finviz y Gemini AI")
 
 
 # -----------------------------
-# 🔍 SEARCHBAR INTELIGENTE — TOP 3 RESULTADOS
+# 🔍 SEARCHBAR INTELIGENTE
 # -----------------------------
 
-# Si ya hay ticker en sesión, significa que ya estamos analizando → NO mostrar buscador
-modo_analisis_activo = "ticker" in st.session_state and st.session_state["ticker"] is not None
+modo_analisis_activo = "ticker" in st.session_state and st.session_state.get("ticker") is not None and st.session_state.get("analizar", False)
 
 if not modo_analisis_activo:
     st.subheader("🔎 Buscar Empresa / Ticker")
@@ -288,15 +293,12 @@ if not modo_analisis_activo:
 
     resultados = []
 
-    # Buscar mientras se escriben mínimo 3 letras
     if len(busqueda) >= 3:
         with st.spinner("Buscando empresas..."):
             resultados = buscar_empresas_detallado(busqueda)
 
-        # Limitar a TOP 3
         resultados = resultados[:3]
 
-    # Mostrar resultados
     if resultados:
         st.write("### Resultados (Top 3):")
 
@@ -305,7 +307,6 @@ if not modo_analisis_activo:
             pais = item["pais"]
             ticker = item["ticker"]
 
-            # Obtener sector desde Yahoo Finance
             try:
                 sector = yf.Ticker(ticker).info.get("sector", "N/A")
             except:
@@ -322,29 +323,28 @@ if not modo_analisis_activo:
                 """)
 
             with col2:
-                if st.button(f"Seleccionar {ticker}", key=f"sel_{ticker}"):
-                    st.session_state["ticker"] = ticker  # guardar ticker
-                    st.rerun()  # reiniciar vista e iniciar análisis
+                if st.button(f"Seleccionar", key=f"sel_{ticker}"):
+                    st.session_state["ticker"] = ticker
+                    st.session_state["analizar"] = False
+                    st.rerun()
+
+    st.stop()
 
 else:
-    # Ya estamos analizando una empresa → mostrar solo el ticker seleccionado
     ticker_final = st.session_state["ticker"]
-    st.text_input("Ticker seleccionado:", value=ticker_final, disabled=True)
+    col_ticker, col_reset = st.columns([4,1])
+    with col_ticker:
+        st.text_input("Ticker seleccionado:", value=ticker_final, disabled=True)
+    with col_reset:
+        if st.button("🔄 Nueva búsqueda"):
+            st.session_state["ticker"] = None
+            st.session_state["analizar"] = False
+            st.rerun()
 
 
 # ----------------------------------
-# MANEJO DEL TICKER FINAL
-# ----------------------------------
-
-if "ticker" in st.session_state:
-    ticker_final = st.session_state["ticker"]
-else:
-    ticker_final = None
-
-
-# -----------------------------
 # FILTROS ADICIONALES
-# -----------------------------
+# ----------------------------------
 col1, col2 = st.columns(2)
 
 with col1:
@@ -362,39 +362,39 @@ with col2:
         ["Inglés", "Español", "Francés", "Alemán", "Italiano", "Portugués"]
     )
 
-st.divider()
+st.markdown("---")
 
-# -----------------------------
-# BOTÓN ANALIZAR — CONTROLADO POR SESSION STATE
-# -----------------------------
-if "analizar" not in st.session_state:
-    st.session_state.analizar = False
-
-if not st.session_state.analizar:
+# ======================================================
+# BOTÓN ANALIZAR
+# ======================================================
+if not st.session_state.get("analizar", False):
     if st.button("🚀 Analizar", type="primary"):
-        st.session_state.analizar = True
+        st.session_state["analizar"] = True
         st.rerun()
-else:
-    st.success("🔍 Análisis en progreso…")
 
-# Si no se ha presionado, detener ejecución
-if not st.session_state.analizar:
+if not st.session_state.get("analizar", False):
     st.stop()
 
-# -----------------------------
-# OBTENER INFO PRINCIPAL
-# -----------------------------
+# ======================================================
+# ANÁLISIS COMPLETO
+# ======================================================
+
+ticker_final = st.session_state["ticker"]
+
 try:
     ticker_info = yf.Ticker(ticker_final)
     info = ticker_info.info
+
     if not info:
-        raise ValueError("Ticker no disponible")
+        raise ValueError("No se pudo obtener información del ticker")
+
 except Exception as e:
-    st.error(f"❌ Error cargando la información de {ticker_final}: {e}")
+    st.error(f"❌ No se pudo cargar la información del ticker: {e}")
     st.stop()
 
+
 # ==============================
-# INSIGHTS FINANCIEROS
+# FINANCIAL INSIGHTS DE YAHOO FINANCE
 # ==============================
 financial_insights = obtener_financial_insights_yf(ticker_final)
 
@@ -403,213 +403,327 @@ if financial_insights:
     st.subheader("✨ Financial Insights (Yahoo Finance)")
     st.markdown(
         f"""
-        <div style='background: #4e54c8; background: linear-gradient(to right, #8f94fb, #4e54c8);
-                    padding: 20px; border-radius: 12px; color: white;'>
-            {financial_insights}
+        <div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                    padding: 20px; border-radius: 10px; color: white; 
+                    box-shadow: 0 4px 15px rgba(0,0,0,0.2);'>
+            <p style='margin: 0; line-height: 1.6;'>{financial_insights}</p>
+            <p style='margin-top: 10px; font-size: 11px; opacity: 0.8;'>
+                Powered by Yahoo Finance
+            </p>
         </div>
         """,
         unsafe_allow_html=True
     )
     st.markdown("---")
 
+
 # ==============================
 # INFORMACIÓN GENERAL
 # ==============================
 st.subheader("🏢 Información General")
 col1, col2 = st.columns(2)
+col1.markdown(f"**Nombre:** {info.get('longName', 'N/A')}")
+col1.markdown(f"**Sector:** {info.get('sector', 'N/A')}")
+col1.markdown(f"**Industria:** {info.get('industry', 'N/A')}")
+col2.markdown(f"**País:** {info.get('country', 'N/A')}")
+col2.markdown(f"**Empleados:** {info.get('fullTimeEmployees', 'N/A')}")
 
-col1.write(f"**Nombre:** {info.get('longName','N/A')}")
-col1.write(f"**Sector:** {info.get('sector','N/A')}")
-col1.write(f"**Industria:** {info.get('industry','N/A')}")
-
-col2.write(f"**País:** {info.get('country','N/A')}")
-col2.write(f"**Empleados:** {info.get('fullTimeEmployees','N/A')}")
-
-desc = info.get("longBusinessSummary","Descripción no disponible")
-with st.spinner("Traduciendo descripción…"):
+desc = info.get('longBusinessSummary', 'Descripción no disponible.')
+with st.spinner(f"Traduciendo a {idioma}..."):
     desc_trad = traducir_descripcion(desc, idioma)
+st.markdown(f"**Descripción ({idioma}):** {desc_trad}")
 
-st.write(f"**Descripción ({idioma}):** {desc_trad}")
 st.divider()
+
 
 # ==============================
 # KPIs
 # ==============================
 st.subheader("💡 KPIs Clave")
 kpis = {
-    "Beta": info.get("beta","N/A"),
-    "P/E": info.get("trailingPE","N/A"),
-    "EPS": info.get("trailingEps","N/A"),
-    "ROE": f"{info.get('returnOnEquity',0)*100:.1f}%" if info.get("returnOnEquity") else "N/A",
-    "Gross Margin": f"{info.get('grossMargins',0)*100:.1f}%" if info.get("grossMargins") else "N/A",
-    "Profit Margin": f"{info.get('profitMargins',0)*100:.1f}%" if info.get('profitMargins') else "N/A",
-    "Dividend Yield": f"{info.get('dividendYield',0)*100:.2f}%" if info.get("dividendYield") else "—",
-    "Market Cap": f"{info.get('marketCap',0)/1e9:.1f} B" if info.get("marketCap") else "N/A"
+    "Beta": info.get("beta", "N/A"),
+    "P/E": info.get("trailingPE", "N/A"),
+    "EPS": info.get("trailingEps", "N/A"),
+    "ROE": f"{info.get('returnOnEquity', 0)*100:.1f}%" if info.get("returnOnEquity") else "N/A",
+    "Gross Margin": f"{info.get('grossMargins', 0)*100:.1f}%" if info.get("grossMargins") else "N/A",
+    "Profit Margin": f"{info.get('profitMargins', 0)*100:.1f}%" if info.get("profitMargins") else "N/A",
+    "Dividend Yield": f"{info.get('dividendYield', 0)*100:.2f}%" if info.get("dividendYield") else "—",
+    "Market Cap": f"{info.get('marketCap', 0)/1e9:,.1f} B" if info.get("marketCap") else "N/A",
+    "Revenue": f"{info.get('totalRevenue', 0)/1e9:,.1f} B" if info.get("totalRevenue") else "N/A",
+    "Net Income": f"{info.get('netIncomeToCommon', 0)/1e9:,.1f} B" if info.get("netIncomeToCommon") else "N/A",
 }
 
+colores = ["#22313F", "#2C3E50", "#34495E", "#3A539B", "#1E8BC3", "#26A65B", "#8E44AD", "#C0392B", "#F39C12"]
+st.markdown("""<style>
+.kpi-bubble {border-radius: 18px; padding: 18px; text-align: center; color: white; 
+            box-shadow: 0 3px 10px rgba(0,0,0,0.3); margin-bottom: 18px;}
+.kpi-title {font-size: 13px; color: #BDC3C7; margin-bottom: 4px; font-weight: 500;}
+.kpi-value {font-size: 20px; font-weight: bold; color: white;}
+</style>""", unsafe_allow_html=True)
+
 cols = st.columns(3)
-for i, (k,v) in enumerate(kpis.items()):
+for i, (k, v) in enumerate(kpis.items()):
     with cols[i % 3]:
         st.markdown(
-            f"""
-            <div style="background:#1E1E2F; padding:15px; border-radius:12px;
-                        text-align:center; color:white;">
-                <div style="opacity:.6; font-size:13px;">{k}</div>
-                <div style="font-size:22px; font-weight:bold;">{v}</div>
-            </div>
-            """,
+            f"""<div class="kpi-bubble" style="background:{colores[i % len(colores)]}">
+                    <div class="kpi-title">{k}</div>
+                    <div class="kpi-value">{v}</div>
+                </div>""",
             unsafe_allow_html=True
         )
 
 st.divider()
 
+
 # ==============================
-# PEERS
+# COMPARACIÓN CON PEERS
 # ==============================
 st.subheader("🔍 Comparación con Competidores")
 peers = obtener_peers_finviz(ticker_final)
 
 if peers:
     df_comp = obtener_kpis_peers(ticker_final, peers)
-    if not df_comp.empty:
-        st.dataframe(df_comp, use_container_width=True, hide_index=True)
-else:
-    st.info("No se encontraron peers.")
 
-st.divider()
+    if not df_comp.empty:
+        def highlight(row):
+            return ["background-color: #1E8BC3; color: white; font-weight: bold"] * len(row) if row["Ticker"] == ticker_final else [""] * len(row)
+
+        st.dataframe(df_comp.style.apply(highlight, axis=1), use_container_width=True, hide_index=True)
+
+        st.divider()
+
 
 # ==============================
-# GRÁFICO DE VELAS — YA FUNCIONA
+# GRÁFICO DE VELAS
 # ==============================
 st.subheader("📊 Gráfico de Velas")
-
 datos = yf.download(ticker_final, period="1y", interval="1d", progress=False)
 
 if not datos.empty:
+    if isinstance(datos.columns, pd.MultiIndex):
+        open_col = datos["Open"].iloc[:, 0]
+        high_col = datos["High"].iloc[:, 0]
+        low_col = datos["Low"].iloc[:, 0]
+        close_col = datos["Close"].iloc[:, 0]
+    else:
+        open_col = datos["Open"]
+        high_col = datos["High"]
+        low_col = datos["Low"]
+        close_col = datos["Close"]
+
     fig = go.Figure(go.Candlestick(
         x=datos.index,
-        open=datos["Open"],
-        high=datos["High"],
-        low=datos["Low"],
-        close=datos["Close"]
+        open=open_col,
+        high=high_col,
+        low=low_col,
+        close=close_col,
+        increasing_line_color="#26A65B",
+        decreasing_line_color="#C0392B"
     ))
-    fig.update_layout(template="plotly_dark", height=600, xaxis_rangeslider_visible=False)
+
+    fig.update_layout(template="plotly_dark", height=600, xaxis_rangeslider_visible=False,
+                      title=f"Precio Histórico - {ticker_final}")
     st.plotly_chart(fig, use_container_width=True)
-else:
-    st.warning("No hay datos disponibles para este ticker.")
 
 st.divider()
 
+
 # ==============================
-# COMPARATIVO CONTRA ÍNDICE — YA FUNCIONA
+# COMPARACIÓN CONTRA ÍNDICE
 # ==============================
-st.subheader("📈 Rendimiento vs Índice")
+st.subheader("📈 Rendimiento Comparativo")
 
 try:
+    datos_ticker = yf.download(ticker_final, period="1y", interval="1d", progress=False)
     indice_t = indices_dict[indice_select]
-    datos_idx = yf.download(indice_t, period="1y", interval="1d", progress=False)
+    datos_indice = yf.download(indice_t, period="1y", interval="1d", progress=False)
 
-    serie_t = datos["Adj Close"]
-    serie_i = datos_idx["Adj Close"]
+    if isinstance(datos_ticker.columns, pd.MultiIndex):
+        precios_ticker = datos_ticker["Adj Close"].iloc[:, 0]
+    else:
+        precios_ticker = datos_ticker["Adj Close"]
 
-    serie_t, serie_i = serie_t.align(serie_i, join="inner")
+    if isinstance(datos_indice.columns, pd.MultiIndex):
+        precios_indice = datos_indice["Adj Close"].iloc[:, 0]
+    else:
+        precios_indice = datos_indice["Adj Close"]
 
-    base_t = serie_t / serie_t.iloc[0] * 100
-    base_i = serie_i / serie_i.iloc[0] * 100
+    precios_ticker, precios_indice = precios_ticker.align(precios_indice, join="inner")
 
-    fig2 = go.Figure()
-    fig2.add_trace(go.Scatter(x=base_t.index, y=base_t, name=ticker_final))
-    fig2.add_trace(go.Scatter(x=base_i.index, y=base_i, name=indice_select))
+    rendimiento_ticker = (precios_ticker / precios_ticker.iloc[0]) * 100
+    rendimiento_indice = (precios_indice / precios_indice.iloc[0]) * 100
 
-    st.plotly_chart(fig2, use_container_width=True)
+    fig_comp = go.Figure()
+    fig_comp.add_trace(go.Scatter(
+        x=rendimiento_ticker.index, y=rendimiento_ticker.values,
+        mode="lines", name=ticker_final, line=dict(color="#1E8BC3", width=3)
+    ))
+    fig_comp.add_trace(go.Scatter(
+        x=rendimiento_indice.index, y=rendimiento_indice.values,
+        mode="lines", name=indice_select, line=dict(color="#E67E22", width=3, dash="dot")
+    ))
 
-except:
-    st.warning("No se pudo generar el comparativo.")
+    fig_comp.update_layout(title=f"{ticker_final} vs {indice_select}", template="plotly_white", height=500)
+    st.plotly_chart(fig_comp, use_container_width=True)
+
+except Exception as e:
+    st.warning(f"No fue posible generar la comparativa: {e}")
 
 st.divider()
 
-# ==============================
-# RIESGOS Y RENDIMIENTOS — YA FUNCIONA
-# ==============================
-st.subheader("📉 Rendimientos y Riesgos")
 
-df_risk = calcular_rendimientos_riesgos(
-    ticker_final,
-    indice_t,
-    periodos_personalizados,
-    periodo_historico.lower()
+# ==============================
+# RENDIMIENTOS Y RIESGOS
+# ==============================
+st.subheader("📊 Rendimientos y Riesgos")
+df_analisis = calcular_rendimientos_riesgos(
+    ticker_final, indice_t, periodos_personalizados, periodo_historico
 )
-
-st.dataframe(df_risk, use_container_width=True, hide_index=True)
+st.dataframe(df_analisis, use_container_width=True, hide_index=True)
 
 st.divider()
+
 
 # ==============================
 # INCOME STATEMENT
 # ==============================
 st.subheader("📘 Income Statement")
 df_income = obtener_income_yahoo(ticker_final)
+
 if not df_income.empty:
     st.dataframe(df_income, use_container_width=True, hide_index=True)
 
 st.divider()
 
+
 # ==============================
-# AI ANALYSIS — YA CON PEERS
+# ANÁLISIS INDIVIDUAL CON GEMINI
 # ==============================
-st.subheader("🤖 Análisis con Gemini AI")
+st.subheader("🧠 Análisis Individual con Gemini AI")
 
 modelo = genai.GenerativeModel("gemini-2.5-flash")
 
-peers_text = ", ".join(peers[:5]) if peers else "Sin peers disponibles"
+prompt_individual = f"""
+Eres un analista financiero profesional. Analiza la empresa {ticker_final} ({info.get('longName', 'N/A')}) con los siguientes datos:
 
-prompt = f"""
-Eres un analista financiero profesional.
-Evalúa {ticker_final} considerando:
+Sector: {info.get('sector')}
+Industria: {info.get('industry')}
+Market Cap: {info.get('marketCap')}
+P/E: {info.get('trailingPE')}
+ROE: {info.get('returnOnEquity')}
+EPS: {info.get('trailingEps')}
+Beta: {info.get('beta')}
+Profit Margin: {info.get('profitMargins')}
+Gross Margin: {info.get('grossMargins')}
+Dividend Yield: {info.get('dividendYield')}
 
-KPIs:
-- Sector: {info.get('sector')}
-- Industria: {info.get('industry')}
-- Market Cap: {info.get('marketCap')}
-- P/E: {info.get('trailingPE')}
-- EPS: {info.get('trailingEps')}
-- ROE: {info.get('returnOnEquity')}
-- Margen Neto: {info.get('profitMargins')}
+Financial Insight de Yahoo Finance: {financial_insights if financial_insights else "No disponible"}
 
-Peers relevantes: {peers_text}
+Genera un análisis profesional en máximo 300 palabras con:
+1. Recomendación de inversión (Comprar/Mantener/Vender)
+2. Fortalezas clave
+3. Riesgos principales
+4. Valoración actual
+5. Perspectiva a corto plazo (3-6 meses)
+6. Perspectiva a largo plazo (1-3 años)
 
-Genera un análisis profesional de máximo 280 palabras con:
-1. Recomendación (Buy / Sell)
-2. Fortalezas de la empresa
-3. Riesgos actuales
-4. Valoración (caro / justo / barato)
-5. Perspectiva 6 meses
-6. Perspectiva 2 años
-
-Da la respuesta en un formato plano, sin asteriscos ni ningun formato markdown, visibile ni invisible.
+Da la respuesta en formato plano, sin asteriscos ni formato markdown.
 """
 
-with st.spinner("Generando análisis…"):
-    texto_ai = modelo.generate_content(prompt).text.strip()
+with st.spinner("Generando análisis individual..."):
+    analisis_individual = modelo.generate_content(prompt_individual).text.strip()
 
 st.markdown(
     f"""
-    <div style='background:#4e54c8; background: linear-gradient(to right, #8f94fb, #4e54c8);
-                padding:25px; border-radius:14px; color:white;'>
-        {texto_ai.replace(chr(10), "<br>")}
+    <div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                padding: 25px; border-radius: 12px; color: white; margin-bottom: 20px;'>
+        {analisis_individual.replace(chr(10), "<br>")}
     </div>
     """,
     unsafe_allow_html=True
 )
 
-st.warning("Este análisis es solo educativo.")
+st.divider()
+
+
+# ==============================
+# ANÁLISIS COMPARATIVO CON PEERS
+# ==============================
+if peers:
+    st.subheader("🔬 Análisis Comparativo con Competidores (Gemini AI)")
+    
+    peers_insights = obtener_financial_insights_peers(peers[:5])
+    
+    peers_data = []
+    for p in peers[:5]:
+        try:
+            p_info = yf.Ticker(p).info
+            peers_data.append({
+                "ticker": p,
+                "name": p_info.get('longName', p),
+                "pe": p_info.get('trailingPE', 'N/A'),
+                "roe": p_info.get('returnOnEquity', 'N/A'),
+                "margin": p_info.get('profitMargins', 'N/A'),
+                "marketcap": p_info.get('marketCap', 'N/A')
+            })
+        except:
+            continue
+    
+    peers_summary = "\n".join([
+        f"- {p['name']} ({p['ticker']}): P/E={p['pe']}, ROE={p['roe']}, Profit Margin={p['margin']}, Market Cap={p['marketcap']}"
+        for p in peers_data
+    ])
+    
+    prompt_comparativo = f"""
+Eres un analista financiero profesional. Compara {ticker_final} ({info.get('longName', 'N/A')}) contra sus principales competidores:
+
+DATOS DE {ticker_final}:
+- Market Cap: {info.get('marketCap')}
+- P/E: {info.get('trailingPE')}
+- ROE: {info.get('returnOnEquity')}
+- Profit Margin: {info.get('profitMargins')}
+- Gross Margin: {info.get('grossMargins')}
+
+COMPETIDORES:
+{peers_summary}
+
+INSIGHTS DE COMPETIDORES:
+{chr(10).join([f"- {t}: {insight[:200]}..." for t, insight in peers_insights.items()])}
+
+Genera un análisis comparativo en máximo 300 palabras que incluya:
+1. Posición competitiva de {ticker_final} en el sector
+2. Ventajas competitivas vs peers
+3. Desventajas o áreas de mejora
+4. Valoración relativa (sobrevalorada/infravalorada vs peers)
+5. Recomendación comparativa
+
+Da la respuesta en formato plano, sin asteriscos ni formato markdown.
+"""
+
+    with st.spinner("Generando análisis comparativo con peers..."):
+        analisis_comparativo = modelo.generate_content(prompt_comparativo).text.strip()
+
+    st.markdown(
+        f"""
+        <div style='background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+                    padding: 25px; border-radius: 12px; color: white;'>
+            {analisis_comparativo.replace(chr(10), "<br>")}
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+st.warning("⚠️ Esto no es recomendación financiera. Solo fines educativos.")
 
 st.divider()
 
+
+# ==============================
 # FOOTER
-st.markdown(
-    "<div style='text-align:center; opacity:.6; font-size:11px;'>"
-    "Yahoo Finance • Finviz • Gemini AI — Ingeniería Financiera"
-    "</div>",
-    unsafe_allow_html=True
-)
+# ==============================
+st.markdown("""
+<div style='text-align:center; color:gray; font-size:11px;'>
+📊 <b>Fuentes:</b> Yahoo Finance & Finviz | 🤖 <b>IA:</b> Gemini 2.5 Flash<br>
+🎓 Ingeniería Financiera | 💻 Versión 3.4 | ⚖️ Solo para uso educativo
+</div>
+""", unsafe_allow_html=True)
