@@ -1125,7 +1125,7 @@ Genera un análisis comparativo en máximo 300 palabras EN {idioma.upper()} que 
 4. Valoración relativa (sobrevalorada/infravalorada vs peers)
 5. Recomendación comparativa
 
-Da la respuesta en formato plano, sin asteriscos ni formato markdown. Hasta el final recomienda de los peers, en que orden invertirías. Pon en mayúsculas la recomendación de comprar o vender. QUE SEA MUY CLARO.
+Da la respuesta en formato plano, sin asteriscos ni formato markdown. Hasta el final recomienda de los peers y el ticker analizado, en que orden invertirías, enuméralos. Pon en mayúsculas la recomendación de comprar o vender. QUE SEA MUY CLARO.
 """
 
                 with st.spinner("Generando análisis comparativo con peers..."):
