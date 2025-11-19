@@ -445,19 +445,32 @@ else:
 
 
         # ==============================
-        # INFORMACIÓN GENERAL
+        # INFORMACIÓN GENERAL - DISEÑO MEJORADO
         # ==============================
         st.subheader("🏢 Información General")
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Nombre", info.get('longName', 'N/A'))
-        col1.metric("Sector", info.get('sector', 'N/A'))
-        col2.metric("Industria", info.get('industry', 'N/A'))
-        col2.metric("País", info.get('country', 'N/A'))
-        col3.metric("Empleados", f"{info.get('fullTimeEmployees', 0):,}" if info.get('fullTimeEmployees') else "N/A")
+        
+        # Card principal con información de la empresa
+        st.markdown(f"""
+            <div style='background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+                        padding: 30px; border-radius: 15px; color: white;
+                        box-shadow: 0 8px 25px rgba(0,0,0,0.3); margin-bottom: 25px;'>
+                <div style='display: flex; justify-content: space-between; align-items: center;'>
+                    <div>
+                        <h2 style='margin: 0; font-size: 32px; font-weight: bold;'>{info.get('longName', 'N/A')}</h2>
+                        <p style='margin: 5px 0; font-size: 16px; opacity: 0.9;'>
+                            🏭 {info.get('sector', 'N/A')} • {info.get('industry', 'N/A')}
+                        </p>
+                        <p style='margin: 5px 0; font-size: 14px; opacity: 0.8;'>
+                            📍 {info.get('country', 'N/A')} • 👥 {f"{info.get('fullTimeEmployees', 0):,}" if info.get('fullTimeEmployees') else "N/A"} empleados
+                        </p>
+                    </div>
+                </div>
+            </div>
+        """, unsafe_allow_html=True)
 
         desc = info.get('longBusinessSummary', 'Descripción no disponible.')
         
-        with st.expander("📄 Ver Descripción"):
+        with st.expander("📄 Ver Descripción Completa"):
             if GEMINI_DISPONIBLE:
                 with st.spinner(f"Traduciendo a {idioma}..."):
                     desc_trad = traducir_descripcion(desc, idioma)
@@ -470,55 +483,257 @@ else:
 
 
         # ==============================
-        # KPIs CLAVE
+        # MÉTRICAS BURSÁTILES
         # ==============================
-        st.subheader("💡 KPIs Clave")
+        st.subheader("📈 Métricas Bursátiles")
+        
+        st.markdown("""
+            <style>
+            .metric-card {
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                padding: 20px;
+                border-radius: 12px;
+                text-align: center;
+                color: white;
+                box-shadow: 0 6px 20px rgba(0,0,0,0.25);
+                margin-bottom: 15px;
+                transition: all 0.3s ease;
+            }
+            .metric-card:hover {
+                transform: translateY(-5px);
+                box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+            }
+            .metric-label {
+                font-size: 13px;
+                opacity: 0.9;
+                margin-bottom: 8px;
+                font-weight: 500;
+                letter-spacing: 0.5px;
+            }
+            .metric-value-big {
+                font-size: 28px;
+                font-weight: bold;
+                color: white;
+            }
+            </style>
+        """, unsafe_allow_html=True)
         
         col1, col2, col3, col4, col5 = st.columns(5)
         
-        col1.metric(
-            "Market Cap",
-            f"${info.get('marketCap', 0)/1e9:,.1f}B" if info.get('marketCap') else "N/A"
-        )
-        col2.metric(
-            "P/E Ratio",
-            f"{info.get('trailingPE', 0):.2f}" if info.get('trailingPE') else "N/A"
-        )
-        col3.metric(
-            "EPS",
-            f"${info.get('trailingEps', 0):.2f}" if info.get('trailingEps') else "N/A"
-        )
-        col4.metric(
-            "Beta",
-            f"{info.get('beta', 0):.2f}" if info.get('beta') else "N/A"
-        )
-        col5.metric(
-            "Dividend Yield",
-            f"{info.get('dividendYield', 0)*100:.2f}%" if info.get('dividendYield') else "—"
-        )
+        # Precio Actual
+        precio_actual = info.get('currentPrice') or info.get('regularMarketPrice', 0)
+        col1.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-label">💵 Precio Actual</div>
+                <div class="metric-value-big">${precio_actual:.2f}</div>
+            </div>
+        """, unsafe_allow_html=True)
+        
+        # Market Cap
+        market_cap = info.get('marketCap', 0)
+        col2.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-label">🏦 Market Cap</div>
+                <div class="metric-value-big">${market_cap/1e9:.1f}B</div>
+            </div>
+        """, unsafe_allow_html=True)
+        
+        # P/E Ratio
+        pe = info.get('trailingPE', 0)
+        col3.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-label">📊 P/E Ratio</div>
+                <div class="metric-value-big">{pe:.2f}</div>
+            </div>
+        """, unsafe_allow_html=True)
+        
+        # Beta
+        beta = info.get('beta', 0)
+        col4.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-label">📉 Beta</div>
+                <div class="metric-value-big">{beta:.2f}</div>
+            </div>
+        """, unsafe_allow_html=True)
+        
+        # EPS
+        eps = info.get('trailingEps', 0)
+        col5.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-label">💰 EPS</div>
+                <div class="metric-value-big">${eps:.2f}</div>
+            </div>
+        """, unsafe_allow_html=True)
 
+        # Segunda fila
         col1, col2, col3, col4, col5 = st.columns(5)
         
-        col1.metric(
-            "ROE",
-            f"{info.get('returnOnEquity', 0)*100:.1f}%" if info.get('returnOnEquity') else "N/A"
-        )
-        col2.metric(
-            "Gross Margin",
-            f"{info.get('grossMargins', 0)*100:.1f}%" if info.get('grossMargins') else "N/A"
-        )
-        col3.metric(
-            "Profit Margin",
-            f"{info.get('profitMargins', 0)*100:.1f}%" if info.get('profitMargins') else "N/A"
-        )
-        col4.metric(
-            "Revenue TTM",
-            f"${info.get('totalRevenue', 0)/1e9:,.1f}B" if info.get('totalRevenue') else "N/A"
-        )
-        col5.metric(
-            "Net Income",
-            f"${info.get('netIncomeToCommon', 0)/1e9:,.1f}B" if info.get('netIncomeToCommon') else "N/A"
-        )
+        # 52 Week High
+        high_52 = info.get('fiftyTwoWeekHigh', 0)
+        col1.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-label">📈 52W High</div>
+                <div class="metric-value-big">${high_52:.2f}</div>
+            </div>
+        """, unsafe_allow_html=True)
+        
+        # 52 Week Low
+        low_52 = info.get('fiftyTwoWeekLow', 0)
+        col2.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-label">📉 52W Low</div>
+                <div class="metric-value-big">${low_52:.2f}</div>
+            </div>
+        """, unsafe_allow_html=True)
+        
+        # Volume
+        volume = info.get('volume', 0)
+        col3.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-label">📊 Volumen</div>
+                <div class="metric-value-big">{volume/1e6:.1f}M</div>
+            </div>
+        """, unsafe_allow_html=True)
+        
+        # Avg Volume
+        avg_vol = info.get('averageVolume', 0)
+        col4.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-label">📊 Vol. Promedio</div>
+                <div class="metric-value-big">{avg_vol/1e6:.1f}M</div>
+            </div>
+        """, unsafe_allow_html=True)
+        
+        # Dividend Yield
+        div_yield = info.get('dividendYield', 0)
+        col5.markdown(f"""
+            <div class="metric-card">
+                <div class="metric-label">💵 Div. Yield</div>
+                <div class="metric-value-big">{div_yield*100:.2f}%</div>
+            </div>
+        """, unsafe_allow_html=True)
+
+        st.markdown("---")
+
+
+        # ==============================
+        # MÉTRICAS CORPORATIVAS
+        # ==============================
+        st.subheader("🏢 Métricas Corporativas")
+        
+        st.markdown("""
+            <style>
+            .corporate-card {
+                background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+                padding: 20px;
+                border-radius: 12px;
+                text-align: center;
+                color: white;
+                box-shadow: 0 6px 20px rgba(0,0,0,0.25);
+                margin-bottom: 15px;
+                transition: all 0.3s ease;
+            }
+            .corporate-card:hover {
+                transform: translateY(-5px);
+                box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+            }
+            </style>
+        """, unsafe_allow_html=True)
+        
+        col1, col2, col3, col4, col5 = st.columns(5)
+        
+        # Revenue
+        revenue = info.get('totalRevenue', 0)
+        col1.markdown(f"""
+            <div class="corporate-card">
+                <div class="metric-label">💼 Revenue TTM</div>
+                <div class="metric-value-big">${revenue/1e9:.1f}B</div>
+            </div>
+        """, unsafe_allow_html=True)
+        
+        # Net Income
+        net_income = info.get('netIncomeToCommon', 0)
+        col2.markdown(f"""
+            <div class="corporate-card">
+                <div class="metric-label">💵 Net Income</div>
+                <div class="metric-value-big">${net_income/1e9:.1f}B</div>
+            </div>
+        """, unsafe_allow_html=True)
+        
+        # ROE
+        roe = info.get('returnOnEquity', 0)
+        col3.markdown(f"""
+            <div class="corporate-card">
+                <div class="metric-label">📊 ROE</div>
+                <div class="metric-value-big">{roe*100:.1f}%</div>
+            </div>
+        """, unsafe_allow_html=True)
+        
+        # Profit Margin
+        profit_margin = info.get('profitMargins', 0)
+        col4.markdown(f"""
+            <div class="corporate-card">
+                <div class="metric-label">📈 Profit Margin</div>
+                <div class="metric-value-big">{profit_margin*100:.1f}%</div>
+            </div>
+        """, unsafe_allow_html=True)
+        
+        # Gross Margin
+        gross_margin = info.get('grossMargins', 0)
+        col5.markdown(f"""
+            <div class="corporate-card">
+                <div class="metric-label">📊 Gross Margin</div>
+                <div class="metric-value-big">{gross_margin*100:.1f}%</div>
+            </div>
+        """, unsafe_allow_html=True)
+
+        # Segunda fila
+        col1, col2, col3, col4, col5 = st.columns(5)
+        
+        # Operating Margin
+        op_margin = info.get('operatingMargins', 0)
+        col1.markdown(f"""
+            <div class="corporate-card">
+                <div class="metric-label">📊 Operating Margin</div>
+                <div class="metric-value-big">{op_margin*100:.1f}%</div>
+            </div>
+        """, unsafe_allow_html=True)
+        
+        # ROA
+        roa = info.get('returnOnAssets', 0)
+        col2.markdown(f"""
+            <div class="corporate-card">
+                <div class="metric-label">💼 ROA</div>
+                <div class="metric-value-big">{roa*100:.1f}%</div>
+            </div>
+        """, unsafe_allow_html=True)
+        
+        # Debt to Equity
+        debt_equity = info.get('debtToEquity', 0)
+        col3.markdown(f"""
+            <div class="corporate-card">
+                <div class="metric-label">⚖️ Debt/Equity</div>
+                <div class="metric-value-big">{debt_equity/100:.2f}</div>
+            </div>
+        """, unsafe_allow_html=True)
+        
+        # Current Ratio
+        current_ratio = info.get('currentRatio', 0)
+        col4.markdown(f"""
+            <div class="corporate-card">
+                <div class="metric-label">💧 Current Ratio</div>
+                <div class="metric-value-big">{current_ratio:.2f}</div>
+            </div>
+        """, unsafe_allow_html=True)
+        
+        # Free Cash Flow
+        fcf = info.get('freeCashflow', 0)
+        col5.markdown(f"""
+            <div class="corporate-card">
+                <div class="metric-label">💰 Free Cash Flow</div>
+                <div class="metric-value-big">${fcf/1e9:.1f}B</div>
+            </div>
+        """, unsafe_allow_html=True)
 
         st.markdown("---")
 
@@ -942,6 +1157,6 @@ Da la respuesta en formato plano, sin asteriscos ni formato markdown.
         st.markdown("""
         <div style='text-align:center; color:gray; font-size:11px; margin-top: 40px;'>
         📊 <b>Fuentes:</b> Yahoo Finance, Finviz & Banxico | 🤖 <b>IA:</b> Gemini 2.5 Flash<br>
-        🎓 Ingeniería Financiera | 💻 Versión 4.2 | ⚖️ Solo para uso educativo
+        🎓 Ingeniería Financiera | 💻 Versión 4.3 | ⚖️ Solo para uso educativo
         </div>
         """, unsafe_allow_html=True)
