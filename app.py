@@ -170,23 +170,35 @@ def obtener_kpis_peers(ticker, peers_list):
     return pd.DataFrame(resultados)
 
 
+def extraer_precios_columna(datos):
+    """Extrae la columna de precios correctamente sin importar si es MultiIndex o no."""
+    if datos.empty:
+        return pd.Series(dtype=float)
+    
+    if isinstance(datos.columns, pd.MultiIndex):
+        if "Adj Close" in datos.columns.get_level_values(0):
+            col = datos["Adj Close"]
+        else:
+            col = datos["Close"]
+        
+        if isinstance(col, pd.DataFrame):
+            return col.iloc[:, 0].astype(float)
+        else:
+            return col.astype(float)
+    else:
+        if "Adj Close" in datos.columns:
+            return datos["Adj Close"].astype(float)
+        else:
+            return datos["Close"].astype(float)
+
+
 def calcular_rendimientos_riesgos(ticker, indice_ticker, periodos_config, periodo_historico):
     resultados = []
     datos_ticker = yf.download(ticker, period=periodo_historico, interval="1d", progress=False)
     datos_indice = yf.download(indice_ticker, period=periodo_historico, interval="1d", progress=False)
 
-    def extraer_precios(datos):
-        if isinstance(datos.columns, pd.MultiIndex):
-            if "Adj Close" in datos.columns.get_level_values(0):
-                return datos["Adj Close"].iloc[:, 0].astype(float)
-            return datos["Close"].iloc[:, 0].astype(float)
-        else:
-            if "Adj Close" in datos.columns:
-                return datos["Adj Close"].astype(float)
-            return datos["Close"].astype(float)
-
-    precios_ticker = extraer_precios(datos_ticker).dropna()
-    precios_indice = extraer_precios(datos_indice).dropna()
+    precios_ticker = extraer_precios_columna(datos_ticker).dropna()
+    precios_indice = extraer_precios_columna(datos_indice).dropna()
 
     precios_ticker, precios_indice = precios_ticker.align(precios_indice, join="inner")
     retornos_ticker = precios_ticker.pct_change().dropna()
@@ -274,7 +286,7 @@ with st.sidebar:
         ]
     
     st.divider()
-    st.markdown("**v3.5** | Ingeniería Financiera")
+    st.markdown("**v3.6** | Ingeniería Financiera")
 
 # -----------------------------
 # ENCABEZADO PRINCIPAL
@@ -530,22 +542,15 @@ else:
         # ==============================
         # COMPARACIÓN CONTRA ÍNDICE
         # ==============================
-        st.subheader("📈 Rendimiento Comparativo")
+        st.subheader("📈 Rendimiento Comparativo vs Índice")
 
         try:
             datos_ticker = yf.download(ticker_final, period="1y", interval="1d", progress=False)
             indice_t = indices_dict[indice_select]
             datos_indice = yf.download(indice_t, period="1y", interval="1d", progress=False)
 
-            if isinstance(datos_ticker.columns, pd.MultiIndex):
-                precios_ticker = datos_ticker["Adj Close"].iloc[:, 0]
-            else:
-                precios_ticker = datos_ticker["Adj Close"]
-
-            if isinstance(datos_indice.columns, pd.MultiIndex):
-                precios_indice = datos_indice["Adj Close"].iloc[:, 0]
-            else:
-                precios_indice = datos_indice["Adj Close"]
+            precios_ticker = extraer_precios_columna(datos_ticker)
+            precios_indice = extraer_precios_columna(datos_indice)
 
             precios_ticker, precios_indice = precios_ticker.align(precios_indice, join="inner")
 
@@ -562,13 +567,78 @@ else:
                 mode="lines", name=indice_select, line=dict(color="#E67E22", width=3, dash="dot")
             ))
 
-            fig_comp.update_layout(title=f"{ticker_final} vs {indice_select}", template="plotly_white", height=500)
+            fig_comp.update_layout(
+                title=f"{ticker_final} vs {indice_select} (Base 100)", 
+                template="plotly_white", 
+                height=500,
+                yaxis_title="Rendimiento (%)",
+                xaxis_title="Fecha"
+            )
             st.plotly_chart(fig_comp, use_container_width=True)
 
         except Exception as e:
             st.warning(f"No fue posible generar la comparativa: {e}")
 
         st.divider()
+
+
+        # ==============================
+        # COMPARACIÓN CON PEERS (GRÁFICO)
+        # ==============================
+        if peers:
+            st.subheader("📊 Rendimiento vs Competidores (Último Año)")
+
+            try:
+                fig_peers = go.Figure()
+                
+                # Agregar el ticker principal
+                datos_main = yf.download(ticker_final, period="1y", interval="1d", progress=False)
+                precios_main = extraer_precios_columna(datos_main)
+                rendimiento_main = (precios_main / precios_main.iloc[0]) * 100
+                
+                fig_peers.add_trace(go.Scatter(
+                    x=rendimiento_main.index,
+                    y=rendimiento_main.values,
+                    mode="lines",
+                    name=ticker_final,
+                    line=dict(color="#1E8BC3", width=4)
+                ))
+
+                # Agregar peers (máximo 5)
+                colores_peers = ["#E67E22", "#26A65B", "#8E44AD", "#C0392B", "#F39C12"]
+                for i, peer in enumerate(peers[:5]):
+                    try:
+                        datos_peer = yf.download(peer, period="1y", interval="1d", progress=False)
+                        precios_peer = extraer_precios_columna(datos_peer)
+                        
+                        if not precios_peer.empty:
+                            rendimiento_peer = (precios_peer / precios_peer.iloc[0]) * 100
+                            
+                            fig_peers.add_trace(go.Scatter(
+                                x=rendimiento_peer.index,
+                                y=rendimiento_peer.values,
+                                mode="lines",
+                                name=peer,
+                                line=dict(color=colores_peers[i % len(colores_peers)], width=2, dash="dot")
+                            ))
+                    except:
+                        continue
+
+                fig_peers.update_layout(
+                    title=f"Rendimiento Comparativo: {ticker_final} vs Peers (Base 100)",
+                    template="plotly_white",
+                    height=550,
+                    yaxis_title="Rendimiento (%)",
+                    xaxis_title="Fecha",
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                )
+                
+                st.plotly_chart(fig_peers, use_container_width=True)
+
+            except Exception as e:
+                st.warning(f"No fue posible generar la comparativa con peers: {e}")
+
+            st.divider()
 
 
         # ==============================
@@ -723,6 +793,6 @@ Da la respuesta en formato plano, sin asteriscos ni formato markdown.
         st.markdown("""
         <div style='text-align:center; color:gray; font-size:11px;'>
         📊 <b>Fuentes:</b> Yahoo Finance & Finviz | 🤖 <b>IA:</b> Gemini 2.5 Flash<br>
-        🎓 Ingeniería Financiera | 💻 Versión 3.5 | ⚖️ Solo para uso educativo
+        🎓 Ingeniería Financiera | 💻 Versión 3.6 | ⚖️ Solo para uso educativo
         </div>
         """, unsafe_allow_html=True)
