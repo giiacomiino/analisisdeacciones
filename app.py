@@ -606,6 +606,8 @@ Genera un análisis profesional en máximo 280 palabras:
 4. Valoración
 5. Perspectiva a corto plazo
 6. Perspectiva a largo plazo
+
+Dame la respuesta en un formato plano, sin asteriscos ni ningún tipo de formato markdown, ni visible ni invisible.
 """
 
 with st.spinner("Generando análisis integral..."):
