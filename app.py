@@ -1051,7 +1051,7 @@ Genera un análisis profesional en máximo 300 palabras EN {idioma.upper()} con:
 5. Perspectiva a corto plazo (3-6 meses)
 6. Perspectiva a largo plazo (1-3 años)
 
-Da la respuesta en formato plano, sin asteriscos ni formato markdown. Hasta el final recomienda de los peers, en que orden invertirías y ponlo enumerados del 1 al 5. Pon en mayúsculas la recomendación de comprar o vender. QUE SEA MUY CLARO.
+Da la respuesta en formato plano, sin asteriscos ni formato markdown.
 """
 
             with st.spinner("Generando análisis individual..."):
@@ -1125,7 +1125,7 @@ Genera un análisis comparativo en máximo 300 palabras EN {idioma.upper()} que 
 4. Valoración relativa (sobrevalorada/infravalorada vs peers)
 5. Recomendación comparativa
 
-Da la respuesta en formato plano, sin asteriscos ni formato markdown.
+Da la respuesta en formato plano, sin asteriscos ni formato markdown. Hasta el final recomienda de los peers, en que orden invertirías. Pon en mayúsculas la recomendación de comprar o vender. QUE SEA MUY CLARO.
 """
 
                 with st.spinner("Generando análisis comparativo con peers..."):
