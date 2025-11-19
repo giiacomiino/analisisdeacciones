@@ -646,7 +646,7 @@ else:
         revenue = info.get('totalRevenue', 0)
         col1.markdown(f"""
             <div class="corporate-card">
-                <div class="metric-label">💼 Revenue TTM</div>
+                <div class="metric-label">💼 Ventas 12M TTM</div>
                 <div class="metric-value-big">${revenue/1e9:.1f}B</div>
             </div>
         """, unsafe_allow_html=True)
@@ -655,7 +655,7 @@ else:
         net_income = info.get('netIncomeToCommon', 0)
         col2.markdown(f"""
             <div class="corporate-card">
-                <div class="metric-label">💵 Net Income</div>
+                <div class="metric-label">💵 Utilidad Neta</div>
                 <div class="metric-value-big">${net_income/1e9:.1f}B</div>
             </div>
         """, unsafe_allow_html=True)
@@ -673,7 +673,7 @@ else:
         profit_margin = info.get('profitMargins', 0)
         col4.markdown(f"""
             <div class="corporate-card">
-                <div class="metric-label">📈 Profit Margin</div>
+                <div class="metric-label">📈 Margen de Ganancia</div>
                 <div class="metric-value-big">{profit_margin*100:.1f}%</div>
             </div>
         """, unsafe_allow_html=True)
@@ -682,7 +682,7 @@ else:
         gross_margin = info.get('grossMargins', 0)
         col5.markdown(f"""
             <div class="corporate-card">
-                <div class="metric-label">📊 Gross Margin</div>
+                <div class="metric-label">📊 Margen Bruto</div>
                 <div class="metric-value-big">{gross_margin*100:.1f}%</div>
             </div>
         """, unsafe_allow_html=True)
@@ -694,7 +694,7 @@ else:
         op_margin = info.get('operatingMargins', 0)
         col1.markdown(f"""
             <div class="corporate-card">
-                <div class="metric-label">📊 Operating Margin</div>
+                <div class="metric-label">📊 Margen de Operación</div>
                 <div class="metric-value-big">{op_margin*100:.1f}%</div>
             </div>
         """, unsafe_allow_html=True)
@@ -712,7 +712,7 @@ else:
         debt_equity = info.get('debtToEquity', 0)
         col3.markdown(f"""
             <div class="corporate-card">
-                <div class="metric-label">⚖️ Debt/Equity</div>
+                <div class="metric-label">⚖️ Deuda/Equity</div>
                 <div class="metric-value-big">{debt_equity/100:.2f}</div>
             </div>
         """, unsafe_allow_html=True)
@@ -721,7 +721,7 @@ else:
         current_ratio = info.get('currentRatio', 0)
         col4.markdown(f"""
             <div class="corporate-card">
-                <div class="metric-label">💧 Current Ratio</div>
+                <div class="metric-label">💧 Radio de Liquidez</div>
                 <div class="metric-value-big">{current_ratio:.2f}</div>
             </div>
         """, unsafe_allow_html=True)
@@ -1051,7 +1051,7 @@ Genera un análisis profesional en máximo 300 palabras EN {idioma.upper()} con:
 5. Perspectiva a corto plazo (3-6 meses)
 6. Perspectiva a largo plazo (1-3 años)
 
-Da la respuesta en formato plano, sin asteriscos ni formato markdown.
+Da la respuesta en formato plano, sin asteriscos ni formato markdown. Hasta el final recomienda de los peers, en que orden invertirías y ponlo enumerados del 1 al 5. Pon en mayúsculas la recomendación de comprar o vender. QUE SEA MUY CLARO.
 """
 
             with st.spinner("Generando análisis individual..."):
