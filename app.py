@@ -17,7 +17,6 @@ st.set_page_config(page_title="Análisis Integral de Acciones", layout="wide", i
 GEMINI_DISPONIBLE = True
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    # Test rápido
     modelo_test = genai.GenerativeModel("gemini-2.5-flash")
 except:
     GEMINI_DISPONIBLE = False
@@ -31,6 +30,28 @@ if "analizar" not in st.session_state:
 # -----------------------------
 # FUNCIONES
 # -----------------------------
+def obtener_tasa_libre_riesgo():
+    """Obtiene la tasa CETES 28 desde Banxico como proxy de tasa libre de riesgo."""
+    try:
+        url = "https://www.banxico.org.mx/"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, "html.parser")
+        
+        # Buscar el div de CETES 28
+        cetes_div = soup.find("div", {"id": "dv_singleCetes28"})
+        if cetes_div:
+            valor_span = cetes_div.find("span", class_="valor")
+            if valor_span:
+                tasa = float(valor_span.get_text(strip=True))
+                return tasa / 100  # Convertir a decimal
+        
+        return 0.07  # Default 7% si no se puede obtener
+    except:
+        return 0.07
+
+
 def buscar_empresas_detallado(nombre):
     """Busca empresas en Yahoo Finance y devuelve nombre, ticker, precio, país y logo."""
     try:
@@ -204,7 +225,7 @@ def extraer_precios_columna(datos):
             return datos["Close"].astype(float)
 
 
-def calcular_metricas_periodo(ticker, indice_ticker, periodo_dias):
+def calcular_metricas_periodo(ticker, indice_ticker, periodo_dias, tasa_libre_riesgo):
     """Calcula métricas de rendimiento y riesgo para un periodo específico."""
     try:
         # Descargar datos
@@ -239,7 +260,10 @@ def calcular_metricas_periodo(ticker, indice_ticker, periodo_dias):
         beta = np.cov(rp, ri)[0, 1] / np.var(ri) if np.var(ri) != 0 else 0
         rend_ind = ((pi.iloc[-1] / pi.iloc[0]) - 1) * 100
         alpha = rendimiento - (beta * rend_ind)
-        sharpe = (rp.mean() * 252 / rp.std()) if rp.std() != 0 else 0
+        
+        # Sharpe Ratio con tasa libre de riesgo
+        rendimiento_anual = rp.mean() * 252
+        sharpe = (rendimiento_anual - tasa_libre_riesgo) / (rp.std() * np.sqrt(252)) if rp.std() != 0 else 0
 
         return {
             "rendimiento": rendimiento,
@@ -262,7 +286,6 @@ def generar_analisis_ai(prompt):
         respuesta = modelo.generate_content(prompt)
         return respuesta.text.strip()
     except Exception as e:
-        # Si falla por límite de requests
         if "429" in str(e) or "quota" in str(e).lower() or "rate" in str(e).lower():
             return None
         return None
@@ -361,7 +384,7 @@ else:
                 label_visibility="collapsed"
             )
     else:
-        idioma = "Inglés"  # Default cuando no hay Gemini
+        idioma = "Inglés"
     
     with col_reset:
         if st.button("🔄", help="Nueva búsqueda"):
@@ -382,6 +405,9 @@ else:
     # ======================================================
 
     if st.session_state.get("analizar", False):
+        
+        # Obtener tasa libre de riesgo
+        tasa_libre_riesgo = obtener_tasa_libre_riesgo()
         
         try:
             ticker_info = yf.Ticker(ticker_final)
@@ -551,7 +577,7 @@ else:
 
 
         # ==============================
-        # COMPARACIÓN CONTRA ÍNDICE
+        # COMPARACIÓN CONTRA ÍNDICE (BASE 0)
         # ==============================
         st.subheader("📈 Rendimiento Comparativo vs Índice")
 
@@ -565,8 +591,9 @@ else:
 
             precios_ticker, precios_indice = precios_ticker.align(precios_indice, join="inner")
 
-            rendimiento_ticker = (precios_ticker / precios_ticker.iloc[0]) * 100
-            rendimiento_indice = (precios_indice / precios_indice.iloc[0]) * 100
+            # Rendimientos en base 0
+            rendimiento_ticker = ((precios_ticker / precios_ticker.iloc[0]) - 1) * 100
+            rendimiento_indice = ((precios_indice / precios_indice.iloc[0]) - 1) * 100
 
             fig_comp = go.Figure()
             fig_comp.add_trace(go.Scatter(
@@ -579,8 +606,11 @@ else:
                 mode="lines", name=indice_select, line=dict(color="#E67E22", width=3, dash="dot")
             ))
 
+            # Línea en y=0
+            fig_comp.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5)
+
             fig_comp.update_layout(
-                title=f"{ticker_final} vs {indice_select} (Base 100)", 
+                title=f"{ticker_final} vs {indice_select} (Base 0)", 
                 template="plotly_white", 
                 height=500,
                 yaxis_title="Rendimiento (%)",
@@ -596,7 +626,7 @@ else:
 
 
         # ==============================
-        # COMPARACIÓN CON PEERS (GRÁFICO)
+        # COMPARACIÓN CON PEERS (GRÁFICO BASE 0)
         # ==============================
         if peers:
             st.subheader("📊 Rendimiento vs Competidores (Último Año)")
@@ -607,7 +637,7 @@ else:
                 # Agregar el ticker principal
                 datos_main = yf.download(ticker_final, period="1y", interval="1d", progress=False)
                 precios_main = extraer_precios_columna(datos_main)
-                rendimiento_main = (precios_main / precios_main.iloc[0]) * 100
+                rendimiento_main = ((precios_main / precios_main.iloc[0]) - 1) * 100
                 
                 fig_peers.add_trace(go.Scatter(
                     x=rendimiento_main.index,
@@ -625,7 +655,7 @@ else:
                         precios_peer = extraer_precios_columna(datos_peer)
                         
                         if not precios_peer.empty:
-                            rendimiento_peer = (precios_peer / precios_peer.iloc[0]) * 100
+                            rendimiento_peer = ((precios_peer / precios_peer.iloc[0]) - 1) * 100
                             
                             fig_peers.add_trace(go.Scatter(
                                 x=rendimiento_peer.index,
@@ -637,8 +667,11 @@ else:
                     except:
                         continue
 
+                # Línea en y=0
+                fig_peers.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5)
+
                 fig_peers.update_layout(
-                    title=f"Rendimiento Comparativo: {ticker_final} vs Peers (Base 100)",
+                    title=f"Rendimiento Comparativo: {ticker_final} vs Peers (Base 0)",
                     template="plotly_white",
                     height=550,
                     yaxis_title="Rendimiento (%)",
@@ -682,58 +715,79 @@ else:
         indice_t = indices_dict[indice_select]
         
         # Calcular métricas
-        metricas = calcular_metricas_periodo(ticker_final, indice_t, periodo_dias)
+        metricas = calcular_metricas_periodo(ticker_final, indice_t, periodo_dias, tasa_libre_riesgo)
         
         if metricas:
+            # CSS para bubbles
+            st.markdown("""
+                <style>
+                .metric-bubble {
+                    background: linear-gradient(135deg, #2C3E50 0%, #34495E 100%);
+                    padding: 25px;
+                    border-radius: 15px;
+                    text-align: center;
+                    color: white;
+                    box-shadow: 0 6px 20px rgba(0,0,0,0.4);
+                    margin-bottom: 10px;
+                    transition: transform 0.3s ease;
+                }
+                .metric-bubble:hover {
+                    transform: translateY(-5px);
+                }
+                .metric-title {
+                    font-size: 14px;
+                    opacity: 0.85;
+                    margin-bottom: 8px;
+                    font-weight: 500;
+                    letter-spacing: 0.5px;
+                }
+                .metric-value {
+                    font-size: 32px;
+                    font-weight: bold;
+                    color: white;
+                }
+                </style>
+            """, unsafe_allow_html=True)
+            
             # Mostrar métricas en cards visuales
             col1, col2, col3, col4, col5 = st.columns(5)
             
             col1.markdown(f"""
-                <div style='background: linear-gradient(135deg, #1E8BC3 0%, #0E5A8A 100%); 
-                            padding: 20px; border-radius: 12px; text-align: center; color: white;
-                            box-shadow: 0 4px 15px rgba(0,0,0,0.2);'>
-                    <h4 style='margin: 0; font-size: 14px; opacity: 0.9;'>Rendimiento</h4>
-                    <h2 style='margin: 10px 0; font-size: 28px;'>{metricas['rendimiento']:.2f}%</h2>
+                <div class="metric-bubble">
+                    <div class="metric-title">Rendimiento</div>
+                    <div class="metric-value">{metricas['rendimiento']:.2f}%</div>
                 </div>
             """, unsafe_allow_html=True)
             
             col2.markdown(f"""
-                <div style='background: linear-gradient(135deg, #26A65B 0%, #1D8348 100%); 
-                            padding: 20px; border-radius: 12px; text-align: center; color: white;
-                            box-shadow: 0 4px 15px rgba(0,0,0,0.2);'>
-                    <h4 style='margin: 0; font-size: 14px; opacity: 0.9;'>Volatilidad</h4>
-                    <h2 style='margin: 10px 0; font-size: 28px;'>{metricas['volatilidad']:.2f}%</h2>
+                <div class="metric-bubble">
+                    <div class="metric-title">Volatilidad</div>
+                    <div class="metric-value">{metricas['volatilidad']:.2f}%</div>
                 </div>
             """, unsafe_allow_html=True)
             
             col3.markdown(f"""
-                <div style='background: linear-gradient(135deg, #8E44AD 0%, #6C3483 100%); 
-                            padding: 20px; border-radius: 12px; text-align: center; color: white;
-                            box-shadow: 0 4px 15px rgba(0,0,0,0.2);'>
-                    <h4 style='margin: 0; font-size: 14px; opacity: 0.9;'>Beta</h4>
-                    <h2 style='margin: 10px 0; font-size: 28px;'>{metricas['beta']:.2f}</h2>
+                <div class="metric-bubble">
+                    <div class="metric-title">Beta</div>
+                    <div class="metric-value">{metricas['beta']:.2f}</div>
                 </div>
             """, unsafe_allow_html=True)
             
             col4.markdown(f"""
-                <div style='background: linear-gradient(135deg, #E67E22 0%, #CA6F1E 100%); 
-                            padding: 20px; border-radius: 12px; text-align: center; color: white;
-                            box-shadow: 0 4px 15px rgba(0,0,0,0.2);'>
-                    <h4 style='margin: 0; font-size: 14px; opacity: 0.9;'>Alpha</h4>
-                    <h2 style='margin: 10px 0; font-size: 28px;'>{metricas['alpha']:.2f}%</h2>
+                <div class="metric-bubble">
+                    <div class="metric-title">Alpha</div>
+                    <div class="metric-value">{metricas['alpha']:.2f}%</div>
                 </div>
             """, unsafe_allow_html=True)
             
             col5.markdown(f"""
-                <div style='background: linear-gradient(135deg, #C0392B 0%, #A93226 100%); 
-                            padding: 20px; border-radius: 12px; text-align: center; color: white;
-                            box-shadow: 0 4px 15px rgba(0,0,0,0.2);'>
-                    <h4 style='margin: 0; font-size: 14px; opacity: 0.9;'>Sharpe Ratio</h4>
-                    <h2 style='margin: 10px 0; font-size: 28px;'>{metricas['sharpe']:.2f}</h2>
+                <div class="metric-bubble">
+                    <div class="metric-title">Sharpe Ratio</div>
+                    <div class="metric-value">{metricas['sharpe']:.2f}</div>
                 </div>
             """, unsafe_allow_html=True)
             
-            st.caption(f"Métricas calculadas para el periodo: **{periodo_sel}** vs **{indice_select}**")
+            st.caption(f"📊 Métricas calculadas para el periodo: **{periodo_sel}** vs **{indice_select}** | 📈 Tasa libre de riesgo (CETES 28): **{tasa_libre_riesgo*100:.2f}%**")
         else:
             st.warning("No se pudieron calcular las métricas para este periodo.")
 
@@ -877,7 +931,6 @@ Da la respuesta en formato plano, sin asteriscos ni formato markdown.
                     st.info("🤖 **Análisis comparativo de IA no disponible:** El límite de requests de Gemini se ha alcanzado. Por favor, intenta más tarde.")
 
         else:
-            # Mensaje cuando Gemini no está disponible desde el inicio
             st.info("🤖 **Análisis de IA no disponible:** El servicio de Gemini AI está temporalmente deshabilitado debido al límite de requests. Todos los gráficos, métricas y datos financieros están disponibles y funcionando correctamente.")
 
         st.markdown("---")
@@ -888,7 +941,7 @@ Da la respuesta en formato plano, sin asteriscos ni formato markdown.
         # ==============================
         st.markdown("""
         <div style='text-align:center; color:gray; font-size:11px; margin-top: 40px;'>
-        📊 <b>Fuentes:</b> Yahoo Finance & Finviz | 🤖 <b>IA:</b> Gemini 2.5 Flash<br>
-        🎓 Ingeniería Financiera | 💻 Versión 4.1 | ⚖️ Solo para uso educativo
+        📊 <b>Fuentes:</b> Yahoo Finance, Finviz & Banxico | 🤖 <b>IA:</b> Gemini 2.5 Flash<br>
+        🎓 Ingeniería Financiera | 💻 Versión 4.2 | ⚖️ Solo para uso educativo
         </div>
         """, unsafe_allow_html=True)
