@@ -12,10 +12,54 @@ from datetime import datetime
 # CONFIGURACIÓN
 # -----------------------------
 st.set_page_config(page_title="Análisis Integral de Acciones", layout="wide", initial_sidebar_state="expanded")
-genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+GEMINI_API_KEY = "AIzaSyDfeYaLerIkXtNpYCKX-iKWOld0Xt6oFeI"
+genai.configure(api_key=GEMINI_API_KEY)
+
 # -----------------------------
 # FUNCIONES
 # -----------------------------
+def buscar_empresas_detallado(nombre):
+    """Busca empresas en Yahoo Finance y devuelve nombre, ticker, precio, país y logo."""
+    try:
+        url = "https://query1.finance.yahoo.com/v1/finance/search"
+        params = {"q": nombre, "quotes_count": 8, "news_count": 0}
+        headers = {"User-Agent": "Mozilla/5.0"}
+        
+        r = requests.get(url, params=params, headers=headers, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+
+        resultados = []
+        for item in data.get("quotes", []):
+            ticker = item.get("symbol")
+            nombre = item.get("shortname") or item.get("longname")
+            if not ticker or not nombre:
+                continue
+
+            # Obtener detalles avanzados con yfinance
+            try:
+                info = yf.Ticker(ticker).info
+                precio = info.get("currentPrice", "N/A")
+                pais = info.get("country", "N/A")
+                logo = info.get("logo_url", None)
+            except:
+                precio = "N/A"
+                pais = "N/A"
+                logo = None
+
+            resultados.append({
+                "ticker": ticker,
+                "nombre": nombre,
+                "precio": precio,
+                "pais": pais,
+                "logo": logo
+            })
+
+        return resultados
+    except:
+        return []
+
+
 def obtener_peers_finviz(ticker):
     try:
         url = f"https://finviz.com/quote.ashx?t={ticker}"
@@ -228,7 +272,52 @@ with col3:
 if st.button("🚀 Analizar", type="primary"):
     with st.spinner("Analizando..."):
         try:
-            ticker_info = yf.Ticker(ticker)
+            # -----------------------------
+            # SEARCHBAR INTELIGENTE
+            # -----------------------------
+            st.subheader("🔎 Buscar Empresa / Ticker")
+
+            busqueda = st.text_input(
+                "Escribe el nombre de la empresa o el ticker:",
+                placeholder="Ejemplo: Apple, Tesla, Amazon, Coca-Cola..."
+            )
+
+            resultados = []
+            ticker = None
+
+            if len(busqueda) >= 2:
+                resultados = buscar_empresas_detallado(busqueda)
+
+            # Mostrar tarjetas visuales
+            if resultados:
+                st.write("### Resultados encontrados:")
+
+                for item in resultados:
+                    col1, col2 = st.columns([1,4])
+
+                    with col1:
+                        if item["logo"]:
+                            st.image(item["logo"], width=60)
+                        else:
+                            st.write("🗂")
+
+                    with col2:
+                        st.markdown(f"""
+                            **{item['nombre']}**  
+                            `{item['ticker']}`  
+                            **Precio actual:** {item['precio']} USD  
+                            **País:** {item['pais']}
+                        """)
+
+                        # Botón para seleccionar la empresa
+                        if st.button(f"Seleccionar {item['ticker']}", key=item['ticker']):
+                            ticker = item["ticker"]
+
+            # Si no se seleccionó nada, mantener uno default
+            if not ticker:
+                ticker = "AAPL"
+
+
             info = ticker_info.info
             
             # ==============================
