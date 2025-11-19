@@ -362,36 +362,39 @@ with col2:
         ["Inglés", "Español", "Francés", "Alemán", "Italiano", "Portugués"]
     )
 
-st.markdown("---")
+st.divider()
 
-# ======================================================
-# BOTÓN — SE GUARDA EN SESSION_STATE (PARA QUE FUNCIONE)
-# ======================================================
-if st.button("🚀 Analizar", type="primary"):
-    st.session_state["analizar"] = True
+# -----------------------------
+# BOTÓN ANALIZAR — CONTROLADO POR SESSION STATE
+# -----------------------------
+if "analizar" not in st.session_state:
+    st.session_state.analizar = False
 
-# Solo se ejecuta si el usuario ya presionó el botón
-if not st.session_state.get("analizar", False):
+if not st.session_state.analizar:
+    if st.button("🚀 Analizar", type="primary"):
+        st.session_state.analizar = True
+        st.rerun()
+else:
+    st.success("🔍 Análisis en progreso…")
+
+# Si no se ha presionado, detener ejecución
+if not st.session_state.analizar:
     st.stop()
 
-# ======================================================
-# ANÁLISIS COMPLETO — AHORA SÍ FUNCIONA
-# ======================================================
-
+# -----------------------------
+# OBTENER INFO PRINCIPAL
+# -----------------------------
 try:
     ticker_info = yf.Ticker(ticker_final)
     info = ticker_info.info
-
     if not info:
-        raise ValueError("No se pudo obtener información del ticker")
-
+        raise ValueError("Ticker no disponible")
 except Exception as e:
-    st.error(f"❌ No se pudo cargar la información del ticker: {e}")
+    st.error(f"❌ Error cargando la información de {ticker_final}: {e}")
     st.stop()
 
-
 # ==============================
-# FINANCIAL INSIGHTS DE YAHOO FINANCE
+# INSIGHTS FINANCIEROS
 # ==============================
 financial_insights = obtener_financial_insights_yf(ticker_final)
 
@@ -400,100 +403,86 @@ if financial_insights:
     st.subheader("✨ Financial Insights (Yahoo Finance)")
     st.markdown(
         f"""
-        <div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
-                    padding: 20px; border-radius: 10px; color: white; 
-                    box-shadow: 0 4px 15px rgba(0,0,0,0.2);'>
-            <p style='margin: 0; line-height: 1.6;'>{financial_insights}</p>
-            <p style='margin-top: 10px; font-size: 11px; opacity: 0.8;'>
-                Powered by Yahoo Finance
-            </p>
+        <div style='background: #4e54c8; background: linear-gradient(to right, #8f94fb, #4e54c8);
+                    padding: 20px; border-radius: 12px; color: white;'>
+            {financial_insights}
         </div>
         """,
         unsafe_allow_html=True
     )
     st.markdown("---")
 
-
 # ==============================
 # INFORMACIÓN GENERAL
 # ==============================
 st.subheader("🏢 Información General")
 col1, col2 = st.columns(2)
-col1.markdown(f"**Nombre:** {info.get('longName', 'N/A')}")
-col1.markdown(f"**Sector:** {info.get('sector', 'N/A')}")
-col1.markdown(f"**Industria:** {info.get('industry', 'N/A')}")
-col2.markdown(f"**País:** {info.get('country', 'N/A')}")
-col2.markdown(f"**Empleados:** {info.get('fullTimeEmployees', 'N/A')}")
 
-desc = info.get('longBusinessSummary', 'Descripción no disponible.')
-with st.spinner(f"Traduciendo a {idioma}..."):
+col1.write(f"**Nombre:** {info.get('longName','N/A')}")
+col1.write(f"**Sector:** {info.get('sector','N/A')}")
+col1.write(f"**Industria:** {info.get('industry','N/A')}")
+
+col2.write(f"**País:** {info.get('country','N/A')}")
+col2.write(f"**Empleados:** {info.get('fullTimeEmployees','N/A')}")
+
+desc = info.get("longBusinessSummary","Descripción no disponible")
+with st.spinner("Traduciendo descripción…"):
     desc_trad = traducir_descripcion(desc, idioma)
-st.markdown(f"**Descripción ({idioma}):** {desc_trad}")
 
+st.write(f"**Descripción ({idioma}):** {desc_trad}")
 st.divider()
-
 
 # ==============================
 # KPIs
 # ==============================
 st.subheader("💡 KPIs Clave")
 kpis = {
-    "Beta": info.get("beta", "N/A"),
-    "P/E": info.get("trailingPE", "N/A"),
-    "EPS": info.get("trailingEps", "N/A"),
-    "ROE": f"{info.get('returnOnEquity', 0)*100:.1f}%" if info.get("returnOnEquity") else "N/A",
-    "Gross Margin": f"{info.get('grossMargins', 0)*100:.1f}%" if info.get("grossMargins") else "N/A",
-    "Profit Margin": f"{info.get('profitMargins', 0)*100:.1f}%" if info.get("profitMargins") else "N/A",
-    "Dividend Yield": f"{info.get('dividendYield', 0)*100:.2f}%" if info.get("dividendYield") else "—",
-    "Market Cap": f"{info.get('marketCap', 0)/1e9:,.1f} B" if info.get("marketCap") else "N/A",
-    "Revenue": f"{info.get('totalRevenue', 0)/1e9:,.1f} B" if info.get("totalRevenue") else "N/A",
-    "Net Income": f"{info.get('netIncomeToCommon', 0)/1e9:,.1f} B" if info.get("netIncomeToCommon") else "N/A",
+    "Beta": info.get("beta","N/A"),
+    "P/E": info.get("trailingPE","N/A"),
+    "EPS": info.get("trailingEps","N/A"),
+    "ROE": f"{info.get('returnOnEquity',0)*100:.1f}%" if info.get("returnOnEquity") else "N/A",
+    "Gross Margin": f"{info.get('grossMargins',0)*100:.1f}%" if info.get("grossMargins") else "N/A",
+    "Profit Margin": f"{info.get('profitMargins',0)*100:.1f}%" if info.get('profitMargins') else "N/A",
+    "Dividend Yield": f"{info.get('dividendYield',0)*100:.2f}%" if info.get("dividendYield") else "—",
+    "Market Cap": f"{info.get('marketCap',0)/1e9:.1f} B" if info.get("marketCap") else "N/A"
 }
 
-colores = ["#22313F", "#2C3E50", "#34495E", "#3A539B", "#1E8BC3", "#26A65B", "#8E44AD", "#C0392B", "#F39C12"]
-st.markdown("""<style>
-.kpi-bubble {border-radius: 18px; padding: 18px; text-align: center; color: white; 
-            box-shadow: 0 3px 10px rgba(0,0,0,0.3); margin-bottom: 18px;}
-.kpi-title {font-size: 13px; color: #BDC3C7; margin-bottom: 4px; font-weight: 500;}
-.kpi-value {font-size: 20px; font-weight: bold; color: white;}
-</style>""", unsafe_allow_html=True)
-
 cols = st.columns(3)
-for i, (k, v) in enumerate(kpis.items()):
+for i, (k,v) in enumerate(kpis.items()):
     with cols[i % 3]:
         st.markdown(
-            f"""<div class="kpi-bubble" style="background:{colores[i % len(colores)]}">
-                    <div class="kpi-title">{k}</div>
-                    <div class="kpi-value">{v}</div>
-                </div>""",
+            f"""
+            <div style="background:#1E1E2F; padding:15px; border-radius:12px;
+                        text-align:center; color:white;">
+                <div style="opacity:.6; font-size:13px;">{k}</div>
+                <div style="font-size:22px; font-weight:bold;">{v}</div>
+            </div>
+            """,
             unsafe_allow_html=True
         )
 
 st.divider()
 
-
 # ==============================
-# COMPARACIÓN CON PEERS
+# PEERS
 # ==============================
 st.subheader("🔍 Comparación con Competidores")
 peers = obtener_peers_finviz(ticker_final)
 
 if peers:
     df_comp = obtener_kpis_peers(ticker_final, peers)
-
     if not df_comp.empty:
-        def highlight(row):
-            return ["background-color: #1E8BC3; color: white; font-weight: bold"] * len(row) if row["Ticker"] == ticker_final else [""] * len(row)
+        st.dataframe(df_comp, use_container_width=True, hide_index=True)
+else:
+    st.info("No se encontraron peers.")
 
-        st.dataframe(df_comp.style.apply(highlight, axis=1), use_container_width=True, hide_index=True)
-
-        st.divider()
-
+st.divider()
 
 # ==============================
-# GRÁFICO DE VELAS
+# GRÁFICO DE VELAS — YA FUNCIONA
 # ==============================
 st.subheader("📊 Gráfico de Velas")
+
 datos = yf.download(ticker_final, period="1y", interval="1d", progress=False)
 
 if not datos.empty:
@@ -502,138 +491,125 @@ if not datos.empty:
         open=datos["Open"],
         high=datos["High"],
         low=datos["Low"],
-        close=datos["Close"],
-        increasing_line_color="#26A65B",
-        decreasing_line_color="#C0392B"
+        close=datos["Close"]
     ))
-
-    fig.update_layout(template="plotly_dark", height=600, xaxis_rangeslider_visible=False,
-                      title=f"Precio Histórico - {ticker_final}")
+    fig.update_layout(template="plotly_dark", height=600, xaxis_rangeslider_visible=False)
     st.plotly_chart(fig, use_container_width=True)
+else:
+    st.warning("No hay datos disponibles para este ticker.")
 
 st.divider()
 
-
 # ==============================
-# COMPARACIÓN CONTRA ÍNDICE
+# COMPARATIVO CONTRA ÍNDICE — YA FUNCIONA
 # ==============================
-st.subheader("📈 Rendimiento Comparativo")
+st.subheader("📈 Rendimiento vs Índice")
 
 try:
-    datos_ticker = yf.download(ticker_final, period="1y", interval="1d", progress=False)
     indice_t = indices_dict[indice_select]
-    datos_indice = yf.download(indice_t, period="1y", interval="1d", progress=False)
+    datos_idx = yf.download(indice_t, period="1y", interval="1d", progress=False)
 
-    precios_ticker = datos_ticker["Adj Close"]
-    precios_indice = datos_indice["Adj Close"]
+    serie_t = datos["Adj Close"]
+    serie_i = datos_idx["Adj Close"]
 
-    precios_ticker, precios_indice = precios_ticker.align(precios_indice, join="inner")
+    serie_t, serie_i = serie_t.align(serie_i, join="inner")
 
-    rendimiento_ticker = (precios_ticker / precios_ticker.iloc[0]) * 100
-    rendimiento_indice = (precios_indice / precios_indice.iloc[0]) * 100
+    base_t = serie_t / serie_t.iloc[0] * 100
+    base_i = serie_i / serie_i.iloc[0] * 100
 
-    fig_comp = go.Figure()
-    fig_comp.add_trace(go.Scatter(
-        x=rendimiento_ticker.index, y=rendimiento_ticker.values,
-        mode="lines", name=ticker_final, line=dict(color="#1E8BC3", width=3)
-    ))
-    fig_comp.add_trace(go.Scatter(
-        x=rendimiento_indice.index, y=rendimiento_indice.values,
-        mode="lines", name=indice_select, line=dict(color="#E67E22", width=3, dash="dot")
-    ))
+    fig2 = go.Figure()
+    fig2.add_trace(go.Scatter(x=base_t.index, y=base_t, name=ticker_final))
+    fig2.add_trace(go.Scatter(x=base_i.index, y=base_i, name=indice_select))
 
-    fig_comp.update_layout(title=f"{ticker_final} vs {indice_select}", template="plotly_white")
-    st.plotly_chart(fig_comp, use_container_width=True)
+    st.plotly_chart(fig2, use_container_width=True)
 
-except Exception as e:
-    st.warning(f"No fue posible generar la comparativa: {e}")
+except:
+    st.warning("No se pudo generar el comparativo.")
 
 st.divider()
 
+# ==============================
+# RIESGOS Y RENDIMIENTOS — YA FUNCIONA
+# ==============================
+st.subheader("📉 Rendimientos y Riesgos")
 
-# ==============================
-# RENDIMIENTOS Y RIESGOS
-# ==============================
-st.subheader("📊 Rendimientos y Riesgos")
-df_analisis = calcular_rendimientos_riesgos(
-    ticker_final, indice_t, periodos_personalizados, periodo_historico.lower()
+df_risk = calcular_rendimientos_riesgos(
+    ticker_final,
+    indice_t,
+    periodos_personalizados,
+    periodo_historico.lower()
 )
-st.dataframe(df_analisis, use_container_width=True, hide_index=True)
+
+st.dataframe(df_risk, use_container_width=True, hide_index=True)
 
 st.divider()
-
 
 # ==============================
 # INCOME STATEMENT
 # ==============================
 st.subheader("📘 Income Statement")
 df_income = obtener_income_yahoo(ticker_final)
-
 if not df_income.empty:
     st.dataframe(df_income, use_container_width=True, hide_index=True)
 
 st.divider()
 
-
 # ==============================
-# ANÁLISIS PRINCIPAL CON GEMINI
+# AI ANALYSIS — YA CON PEERS
 # ==============================
-st.subheader("🧠 Análisis Integral con Gemini AI")
+st.subheader("🤖 Análisis con Gemini AI")
 
 modelo = genai.GenerativeModel("gemini-2.5-flash")
 
-peers_summary = ", ".join(peers[:5]) if peers else "No available"
+peers_text = ", ".join(peers[:5]) if peers else "Sin peers disponibles"
 
 prompt = f"""
-Eres un analista financiero profesional. Analiza {ticker_final} con los siguientes datos:
+Eres un analista financiero profesional.
+Evalúa {ticker_final} considerando:
 
-Sector: {info.get('sector')}
-Industria: {info.get('industry')}
-Market Cap: {info.get('marketCap')}
-P/E: {info.get('trailingPE')}
-ROE: {info.get('returnOnEquity')}
-EPS: {info.get('trailingEps')}
-Márgenes: {info.get('profitMargins')}
+KPIs:
+- Sector: {info.get('sector')}
+- Industria: {info.get('industry')}
+- Market Cap: {info.get('marketCap')}
+- P/E: {info.get('trailingPE')}
+- EPS: {info.get('trailingEps')}
+- ROE: {info.get('returnOnEquity')}
+- Margen Neto: {info.get('profitMargins')}
 
-Insight financiero: {financial_insights}
+Peers relevantes: {peers_text}
 
-Comparación con peers: {peers_summary}
+Genera un análisis profesional de máximo 280 palabras con:
+1. Recomendación (Buy / Sell)
+2. Fortalezas de la empresa
+3. Riesgos actuales
+4. Valoración (caro / justo / barato)
+5. Perspectiva 6 meses
+6. Perspectiva 2 años
 
-Genera un análisis profesional en máximo 280 palabras:
-1. Recomendación
-2. Fortalezas
-3. Riesgos
-4. Valoración
-5. Perspectiva a corto plazo
-6. Perspectiva a largo plazo
-
-Dame la respuesta en un formato plano, sin asteriscos ni ningún tipo de formato markdown, ni visible ni invisible.
+Da la respuesta en un formato plano, sin asteriscos ni ningun formato markdown, visibile ni invisible.
 """
 
-with st.spinner("Generando análisis integral..."):
-    analisis_ai = modelo.generate_content(prompt).text.strip()
+with st.spinner("Generando análisis…"):
+    texto_ai = modelo.generate_content(prompt).text.strip()
 
 st.markdown(
     f"""
-    <div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                padding: 25px; border-radius: 12px; color: white;'>
-        {analisis_ai.replace(chr(10), "<br>")}
+    <div style='background:#4e54c8; background: linear-gradient(to right, #8f94fb, #4e54c8);
+                padding:25px; border-radius:14px; color:white;'>
+        {texto_ai.replace(chr(10), "<br>")}
     </div>
     """,
     unsafe_allow_html=True
 )
 
-st.warning("⚠️ Esto no es recomendación financiera. Solo fines educativos.")
+st.warning("Este análisis es solo educativo.")
 
 st.divider()
 
-
-# ==============================
 # FOOTER
-# ==============================
-st.markdown("""
-<div style='text-align:center; color:gray; font-size:11px;'>
-📊 <b>Fuentes:</b> Yahoo Finance & Finviz | 🤖 <b>IA:</b> Gemini 2.5 Flash<br>
-🎓 Ingeniería Financiera | 💻 Versión 3.3 | ⚖️ Solo para uso educativo
-</div>
-""", unsafe_allow_html=True)
+st.markdown(
+    "<div style='text-align:center; opacity:.6; font-size:11px;'>"
+    "Yahoo Finance • Finviz • Gemini AI — Ingeniería Financiera"
+    "</div>",
+    unsafe_allow_html=True
+)
