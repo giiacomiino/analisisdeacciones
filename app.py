@@ -688,7 +688,7 @@ Dividend Yield: {info.get('dividendYield')}
 
 Financial Insight de Yahoo Finance: {financial_insights if financial_insights else "No disponible"}
 
-Genera un análisis profesional en máximo 300 palabras EN {idioma.upper()} con:
+Genera un análisis profesional en máximo 300 palabras separado por puntos y bullet points EN {idioma.upper()} con:
 1. Recomendación de inversión (Comprar/Vender)
 2. Fortalezas clave
 3. Riesgos principales
@@ -696,7 +696,7 @@ Genera un análisis profesional en máximo 300 palabras EN {idioma.upper()} con:
 5. Perspectiva a corto plazo (3-6 meses)
 6. Perspectiva a largo plazo (1-3 años)
 
-Da la respuesta en formato plano, sin asteriscos ni formato markdown.
+Da la respuesta en formato plano, sin asteriscos ni formato markdown. 
 """
 
         with st.spinner("Generando análisis individual..."):
