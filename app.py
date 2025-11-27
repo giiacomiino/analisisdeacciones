@@ -427,7 +427,7 @@ else:
         financial_insights = obtener_financial_insights_yf(ticker_final)
 
         if financial_insights:
-            st.subheader("✨ Financial Insights")
+            st.subheader("✨ Insights Financieros")
             st.markdown(
                 f"""
                 <div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
@@ -760,7 +760,26 @@ else:
         # GRÁFICO DE VELAS
         # ==============================
         st.subheader("📊 Gráfico de Velas")
-        datos = yf.download(ticker_final, period="1y", interval="1d", progress=False)
+
+        # Selector de periodo para el gráfico de velas
+        periodo_velas_opciones = {
+            "1 Mes": "1mo",
+            "3 Meses": "3mo",
+            "6 Meses": "6mo",
+            "1 Año": "1y",
+            "2 Años": "2y",
+            "3 Años": "3y",
+            "5 Años": "5y"
+        }
+
+        periodo_velas_sel = st.selectbox(
+            "Selecciona el periodo:",
+            list(periodo_velas_opciones.keys()),
+            index=3,  # Por defecto "1 Año"
+            key="periodo_velas"
+        )
+
+        datos = yf.download(ticker_final, period=periodo_velas_opciones[periodo_velas_sel], interval="1d", progress=False)
 
         if not datos.empty:
             if isinstance(datos.columns, pd.MultiIndex):
@@ -785,11 +804,10 @@ else:
             ))
 
             fig.update_layout(template="plotly_dark", height=600, xaxis_rangeslider_visible=False,
-                              title=f"Precio Histórico - {ticker_final}")
+                            title=f"Precio Histórico - {ticker_final} ({periodo_velas_sel})")
             st.plotly_chart(fig, use_container_width=True)
 
         st.markdown("---")
-
 
         # ==============================
         # COMPARACIÓN CONTRA ÍNDICE (BASE 0)
@@ -1125,7 +1143,7 @@ Genera un análisis comparativo en máximo 300 palabras EN {idioma.upper()} que 
 4. Valoración relativa (sobrevalorada/infravalorada vs peers)
 5. Recomendación comparativa
 
-Da la respuesta en formato plano, sin asteriscos ni formato markdown. Hasta el final recomienda de los peers y el ticker analizado, en que orden invertirías, enuméralos. Pon en mayúsculas la recomendación de comprar o vender. QUE SEA MUY CLARO.
+Da la respuesta en formato plano, sin asteriscos ni formato markdown. Hasta el final recomienda de los peers y el ticker analizado, en que orden invertirías, enuméralos. Pon en mayúsculas la recomendación de comprar o vender. QUE SEA MUY CLARO. 
 """
 
                 with st.spinner("Generando análisis comparativo con peers..."):
