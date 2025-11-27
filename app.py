@@ -762,22 +762,25 @@ else:
         st.subheader("📊 Gráfico de Velas")
 
         # Selector de periodo para el gráfico de velas
-        periodo_velas_opciones = {
-            "1 Mes": "1mo",
-            "3 Meses": "3mo",
-            "6 Meses": "6mo",
-            "1 Año": "1y",
-            "2 Años": "2y",
-            "3 Años": "3y",
-            "5 Años": "5y"
-        }
+        col_periodo, col_espacio = st.columns([2, 4])
 
-        periodo_velas_sel = st.selectbox(
-            "Selecciona el periodo:",
-            list(periodo_velas_opciones.keys()),
-            index=3,  # Por defecto "1 Año"
-            key="periodo_velas"
-        )
+        with col_periodo:
+            periodo_velas_opciones = {
+                "1 Mes": "1mo",
+                "3 Meses": "3mo",
+                "6 Meses": "6mo",
+                "1 Año": "1y",
+                "2 Años": "2y",
+                "3 Años": "3y",
+                "5 Años": "5y"
+            }
+            
+            periodo_velas_sel = st.selectbox(
+                "Selecciona el periodo:",
+                list(periodo_velas_opciones.keys()),
+                index=3,  # Por defecto "1 Año"
+                key="periodo_velas"
+            )
 
         datos = yf.download(ticker_final, period=periodo_velas_opciones[periodo_velas_sel], interval="1d", progress=False)
 
