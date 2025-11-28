@@ -230,7 +230,7 @@ def traducir_descripcion(texto, idioma_destino):
     if idioma_destino == "Inglés" or not texto or texto == "Descripción no disponible.":
         return texto
     try:
-        modelo = genai.GenerativeModel("gemini-2.5-flash")
+        modelo = genai.GenerativeModel("gemini-1.5-flash")
         respuesta = modelo.generate_content(f"Traduce al {idioma_destino}: {texto}")
         return respuesta.text.strip()
     except:
@@ -320,7 +320,7 @@ def analizar_sentimiento_gemini(ticker, noticias):
     """
     
     try:
-        modelo = genai.GenerativeModel("gemini-2.5-flash")
+        modelo = genai.GenerativeModel("gemini-1.5-flash")
         respuesta = modelo.generate_content(prompt)
         return respuesta.text.strip()
     except:
@@ -419,7 +419,7 @@ def generar_analisis_ai(prompt):
         return None
     
     try:
-        modelo = genai.GenerativeModel("gemini-2.5-flash")
+        modelo = genai.GenerativeModel("gemini-1.5-flash")
         respuesta = modelo.generate_content(prompt)
         return respuesta.text.strip()
     except Exception as e:
@@ -635,10 +635,49 @@ else:
                 box-shadow: 0 6px 20px rgba(0,0,0,0.25);
                 margin-bottom: 15px;
                 transition: all 0.3s ease;
+                position: relative; /* Necesario para el tooltip */
             }
             .metric-card:hover {
                 transform: translateY(-5px);
                 box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+            }
+            /* Tooltip CSS */
+            .metric-card[data-tooltip]:hover::after {
+                content: attr(data-tooltip);
+                position: absolute;
+                bottom: 100%;
+                left: 50%;
+                transform: translateX(-50%);
+                background-color: #333;
+                color: white;
+                padding: 8px 12px;
+                border-radius: 6px;
+                font-size: 12px;
+                white-space: normal;
+                width: 200px;
+                z-index: 1000;
+                opacity: 0;
+                animation: fadeIn 0.3s forwards;
+                pointer-events: none;
+                box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+                margin-bottom: 10px;
+            }
+            @keyframes fadeIn {
+                to { opacity: 1; }
+            }
+            /* Triángulo del tooltip */
+            .metric-card[data-tooltip]:hover::before {
+                content: '';
+                position: absolute;
+                bottom: 100%;
+                left: 50%;
+                transform: translateX(-50%);
+                border-width: 6px;
+                border-style: solid;
+                border-color: #333 transparent transparent transparent;
+                margin-bottom: -2px; /* Ajuste fino */
+                opacity: 0;
+                animation: fadeIn 0.3s forwards;
             }
             .metric-label {
                 font-size: 13px;
@@ -655,12 +694,26 @@ else:
             </style>
         """, unsafe_allow_html=True)
         
+        # Diccionario de definiciones
+        tooltips = {
+            "precio": "El precio actual de una acción en el mercado.",
+            "market_cap": "Capitalización de Mercado: Valor total de todas las acciones de la empresa (Precio x Acciones en circulación).",
+            "pe": "Price-to-Earnings Ratio: Mide cuánto pagan los inversores por cada dólar de ganancia. Un P/E alto puede indicar crecimiento o sobrevaloración.",
+            "beta": "Mide la volatilidad de una acción respecto al mercado. Beta > 1 es más volátil, Beta < 1 es menos volátil.",
+            "eps": "Earnings Per Share (Beneficio por Acción): Ganancia neta dividida por el número de acciones.",
+            "high52": "El precio más alto alcanzado en las últimas 52 semanas.",
+            "low52": "El precio más bajo alcanzado en las últimas 52 semanas.",
+            "volumen": "Número de acciones negociadas en el día actual.",
+            "avg_vol": "Promedio de acciones negociadas diariamente en los últimos 3 meses.",
+            "div_yield": "Dividend Yield: Porcentaje del precio de la acción que se paga como dividendos anualmente."
+        }
+        
         col1, col2, col3, col4, col5 = st.columns(5)
         
         # Precio Actual
         precio_actual = info.get('currentPrice') or info.get('regularMarketPrice', 0)
         col1.markdown(f"""
-            <div class="metric-card">
+            <div class="metric-card" data-tooltip="{tooltips['precio']}">
                 <div class="metric-label">💵 Precio Actual</div>
                 <div class="metric-value-big">${precio_actual:.2f}</div>
             </div>
@@ -669,7 +722,7 @@ else:
         # Market Cap
         market_cap = info.get('marketCap', 0)
         col2.markdown(f"""
-            <div class="metric-card">
+            <div class="metric-card" data-tooltip="{tooltips['market_cap']}">
                 <div class="metric-label">🏦 Market Cap</div>
                 <div class="metric-value-big">${market_cap/1e9:.1f}B</div>
             </div>
@@ -678,7 +731,7 @@ else:
         # P/E Ratio
         pe = info.get('trailingPE', 0)
         col3.markdown(f"""
-            <div class="metric-card">
+            <div class="metric-card" data-tooltip="{tooltips['pe']}">
                 <div class="metric-label">📊 P/E Ratio</div>
                 <div class="metric-value-big">{pe:.2f}</div>
             </div>
@@ -687,7 +740,7 @@ else:
         # Beta
         beta = info.get('beta', 0)
         col4.markdown(f"""
-            <div class="metric-card">
+            <div class="metric-card" data-tooltip="{tooltips['beta']}">
                 <div class="metric-label">📉 Beta</div>
                 <div class="metric-value-big">{beta:.2f}</div>
             </div>
@@ -696,19 +749,19 @@ else:
         # EPS
         eps = info.get('trailingEps', 0)
         col5.markdown(f"""
-            <div class="metric-card">
+            <div class="metric-card" data-tooltip="{tooltips['eps']}">
                 <div class="metric-label">💰 EPS</div>
                 <div class="metric-value-big">${eps:.2f}</div>
             </div>
         """, unsafe_allow_html=True)
-
+        
         # Segunda fila
         col1, col2, col3, col4, col5 = st.columns(5)
         
         # 52 Week High
         high_52 = info.get('fiftyTwoWeekHigh', 0)
         col1.markdown(f"""
-            <div class="metric-card">
+            <div class="metric-card" data-tooltip="{tooltips['high52']}">
                 <div class="metric-label">📈 52W High</div>
                 <div class="metric-value-big">${high_52:.2f}</div>
             </div>
@@ -717,7 +770,7 @@ else:
         # 52 Week Low
         low_52 = info.get('fiftyTwoWeekLow', 0)
         col2.markdown(f"""
-            <div class="metric-card">
+            <div class="metric-card" data-tooltip="{tooltips['low52']}">
                 <div class="metric-label">📉 52W Low</div>
                 <div class="metric-value-big">${low_52:.2f}</div>
             </div>
@@ -726,7 +779,7 @@ else:
         # Volume
         volume = info.get('volume', 0)
         col3.markdown(f"""
-            <div class="metric-card">
+            <div class="metric-card" data-tooltip="{tooltips['volumen']}">
                 <div class="metric-label">📊 Volumen</div>
                 <div class="metric-value-big">{volume/1e6:.1f}M</div>
             </div>
@@ -735,7 +788,7 @@ else:
         # Avg Volume
         avg_vol = info.get('averageVolume', 0)
         col4.markdown(f"""
-            <div class="metric-card">
+            <div class="metric-card" data-tooltip="{tooltips['avg_vol']}">
                 <div class="metric-label">📊 Vol. Promedio</div>
                 <div class="metric-value-big">{avg_vol/1e6:.1f}M</div>
             </div>
@@ -744,7 +797,7 @@ else:
         # Dividend Yield
         div_yield = info.get('dividendYield', 0)
         col5.markdown(f"""
-            <div class="metric-card">
+            <div class="metric-card" data-tooltip="{tooltips['div_yield']}">
                 <div class="metric-label">💵 Div. Yield</div>
                 <div class="metric-value-big">{div_yield*100:.2f}%</div>
             </div>
@@ -769,20 +822,69 @@ else:
                 box-shadow: 0 6px 20px rgba(0,0,0,0.25);
                 margin-bottom: 15px;
                 transition: all 0.3s ease;
+                position: relative;
             }
             .corporate-card:hover {
                 transform: translateY(-5px);
                 box-shadow: 0 10px 30px rgba(0,0,0,0.35);
             }
+            /* Tooltip CSS para Corporate */
+            .corporate-card[data-tooltip]:hover::after {
+                content: attr(data-tooltip);
+                position: absolute;
+                bottom: 100%;
+                left: 50%;
+                transform: translateX(-50%);
+                background-color: #333;
+                color: white;
+                padding: 8px 12px;
+                border-radius: 6px;
+                font-size: 12px;
+                white-space: normal;
+                width: 200px;
+                z-index: 1000;
+                opacity: 0;
+                animation: fadeIn 0.3s forwards;
+                pointer-events: none;
+                box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+                margin-bottom: 10px;
+            }
+            .corporate-card[data-tooltip]:hover::before {
+                content: '';
+                position: absolute;
+                bottom: 100%;
+                left: 50%;
+                transform: translateX(-50%);
+                border-width: 6px;
+                border-style: solid;
+                border-color: #333 transparent transparent transparent;
+                margin-bottom: -2px;
+                opacity: 0;
+                animation: fadeIn 0.3s forwards;
+            }
             </style>
         """, unsafe_allow_html=True)
+        
+        # Diccionario de definiciones corporativas
+        corp_tooltips = {
+            "revenue": "Ingresos totales de la empresa en los últimos 12 meses (TTM).",
+            "net_income": "Utilidad Neta: Ganancia total después de todos los gastos e impuestos.",
+            "roe": "Return on Equity: Mide la rentabilidad generada con el dinero de los accionistas.",
+            "profit_margin": "Margen de Ganancia: Porcentaje de ingresos que se convierte en ganancia neta.",
+            "gross_margin": "Margen Bruto: Porcentaje de ingresos que queda después de restar el costo de ventas.",
+            "op_margin": "Margen Operativo: Porcentaje de ingresos después de gastos operativos pero antes de impuestos.",
+            "roa": "Return on Assets: Mide qué tan eficiente es la empresa usando sus activos para generar ganancias.",
+            "debt_equity": "Relación Deuda/Capital: Mide el apalancamiento financiero. Valores altos indican mayor riesgo.",
+            "current_ratio": "Radio de Liquidez: Capacidad de la empresa para pagar sus deudas a corto plazo (Activo Cte / Pasivo Cte).",
+            "fcf": "Free Cash Flow: Efectivo generado por la empresa después de mantener sus activos (CAPEX)."
+        }
         
         col1, col2, col3, col4, col5 = st.columns(5)
         
         # Revenue
         revenue = info.get('totalRevenue', 0)
         col1.markdown(f"""
-            <div class="corporate-card">
+            <div class="corporate-card" data-tooltip="{corp_tooltips['revenue']}">
                 <div class="metric-label">💼 Ventas 12M TTM</div>
                 <div class="metric-value-big">${revenue/1e9:.1f}B</div>
             </div>
@@ -791,7 +893,7 @@ else:
         # Net Income
         net_income = info.get('netIncomeToCommon', 0)
         col2.markdown(f"""
-            <div class="corporate-card">
+            <div class="corporate-card" data-tooltip="{corp_tooltips['net_income']}">
                 <div class="metric-label">💵 Utilidad Neta</div>
                 <div class="metric-value-big">${net_income/1e9:.1f}B</div>
             </div>
@@ -800,7 +902,7 @@ else:
         # ROE
         roe = info.get('returnOnEquity', 0)
         col3.markdown(f"""
-            <div class="corporate-card">
+            <div class="corporate-card" data-tooltip="{corp_tooltips['roe']}">
                 <div class="metric-label">📊 ROE</div>
                 <div class="metric-value-big">{roe*100:.1f}%</div>
             </div>
@@ -809,7 +911,7 @@ else:
         # Profit Margin
         profit_margin = info.get('profitMargins', 0)
         col4.markdown(f"""
-            <div class="corporate-card">
+            <div class="corporate-card" data-tooltip="{corp_tooltips['profit_margin']}">
                 <div class="metric-label">📈 Margen de Ganancia</div>
                 <div class="metric-value-big">{profit_margin*100:.1f}%</div>
             </div>
@@ -818,7 +920,7 @@ else:
         # Gross Margin
         gross_margin = info.get('grossMargins', 0)
         col5.markdown(f"""
-            <div class="corporate-card">
+            <div class="corporate-card" data-tooltip="{corp_tooltips['gross_margin']}">
                 <div class="metric-label">📊 Margen Bruto</div>
                 <div class="metric-value-big">{gross_margin*100:.1f}%</div>
             </div>
@@ -830,7 +932,7 @@ else:
         # Operating Margin
         op_margin = info.get('operatingMargins', 0)
         col1.markdown(f"""
-            <div class="corporate-card">
+            <div class="corporate-card" data-tooltip="{corp_tooltips['op_margin']}">
                 <div class="metric-label">📊 Margen de Operación</div>
                 <div class="metric-value-big">{op_margin*100:.1f}%</div>
             </div>
@@ -839,7 +941,7 @@ else:
         # ROA
         roa = info.get('returnOnAssets', 0)
         col2.markdown(f"""
-            <div class="corporate-card">
+            <div class="corporate-card" data-tooltip="{corp_tooltips['roa']}">
                 <div class="metric-label">💼 ROA</div>
                 <div class="metric-value-big">{roa*100:.1f}%</div>
             </div>
@@ -848,7 +950,7 @@ else:
         # Debt to Equity
         debt_equity = info.get('debtToEquity', 0)
         col3.markdown(f"""
-            <div class="corporate-card">
+            <div class="corporate-card" data-tooltip="{corp_tooltips['debt_equity']}">
                 <div class="metric-label">⚖️ Deuda/Equity</div>
                 <div class="metric-value-big">{debt_equity/100:.2f}</div>
             </div>
@@ -857,7 +959,7 @@ else:
         # Current Ratio
         current_ratio = info.get('currentRatio', 0)
         col4.markdown(f"""
-            <div class="corporate-card">
+            <div class="corporate-card" data-tooltip="{corp_tooltips['current_ratio']}">
                 <div class="metric-label">💧 Radio de Liquidez</div>
                 <div class="metric-value-big">{current_ratio:.2f}</div>
             </div>
@@ -866,7 +968,7 @@ else:
         # Free Cash Flow
         fcf = info.get('freeCashflow', 0)
         col5.markdown(f"""
-            <div class="corporate-card">
+            <div class="corporate-card" data-tooltip="{corp_tooltips['fcf']}">
                 <div class="metric-label">💰 Free Cash Flow</div>
                 <div class="metric-value-big">${fcf/1e9:.1f}B</div>
             </div>
