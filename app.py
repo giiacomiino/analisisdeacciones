@@ -15,17 +15,29 @@ st.set_page_config(page_title="Análisis Integral de Acciones", layout="wide", i
 
 # Verificar disponibilidad de Gemini
 GEMINI_DISPONIBLE = True
+GEMINI_ERROR_INIT = None
+
 try:
-    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    modelo_test = genai.GenerativeModel("gemini-2.5-flash")
-except:
+    # Solo verificar que la API key existe, sin hacer llamadas que consuman cuota
+    api_key = st.secrets["GEMINI_API_KEY"]
+    if not api_key or len(api_key) < 10:
+        raise ValueError("API Key vacía o inválida")
+    genai.configure(api_key=api_key)
+    # No hacer llamada de prueba para no consumir cuota
+except KeyError:
     GEMINI_DISPONIBLE = False
+    GEMINI_ERROR_INIT = "API Key no configurada en secrets"
+except Exception as e:
+    GEMINI_DISPONIBLE = False
+    GEMINI_ERROR_INIT = str(e)
 
 # Inicializar session_state
 if "ticker" not in st.session_state:
     st.session_state["ticker"] = None
 if "analizar" not in st.session_state:
     st.session_state["analizar"] = False
+if "ai_error" not in st.session_state:
+    st.session_state["ai_error"] = None
 
 # -----------------------------
 # FUNCIONES
@@ -230,7 +242,7 @@ def traducir_descripcion(texto, idioma_destino):
     if idioma_destino == "Inglés" or not texto or texto == "Descripción no disponible.":
         return texto
     try:
-        modelo = genai.GenerativeModel("gemini-1.5-flash")
+        modelo = genai.GenerativeModel("gemini-2.5-flash")
         respuesta = modelo.generate_content(f"Traduce al {idioma_destino}: {texto}")
         return respuesta.text.strip()
     except:
@@ -295,8 +307,33 @@ def obtener_noticias_yf(ticker):
     try:
         t = yf.Ticker(ticker)
         news = t.news
-        return news if news else []
-    except:
+        
+        if not news:
+            return []
+        
+        # Procesar las noticias al nuevo formato
+        noticias_procesadas = []
+        for item in news:
+            try:
+                # El nuevo formato tiene estructura anidada
+                if isinstance(item, dict):
+                    # Extraer contenido principal
+                    content = item.get('content', {})
+                    
+                    noticia = {
+                        'title': content.get('title', 'Sin título'),
+                        'link': content.get('canonicalUrl', {}).get('url', content.get('clickThroughUrl', {}).get('url', '#')),
+                        'publisher': content.get('provider', {}).get('displayName', 'Desconocido'),
+                        'published': content.get('pubDate', ''),
+                        'summary': content.get('summary', '')
+                    }
+                    noticias_procesadas.append(noticia)
+            except Exception as e:
+                # Si hay error procesando una noticia específica, continuar con las demás
+                continue
+        
+        return noticias_procesadas if noticias_procesadas else []
+    except Exception as e:
         return []
 
 
@@ -320,10 +357,25 @@ def analizar_sentimiento_gemini(ticker, noticias):
     """
     
     try:
-        modelo = genai.GenerativeModel("gemini-1.5-flash")
+        modelo = genai.GenerativeModel("gemini-2.5-flash")
         respuesta = modelo.generate_content(prompt)
-        return respuesta.text.strip()
-    except:
+        
+        # Verificar si la respuesta está bloqueada
+        if hasattr(respuesta, 'prompt_feedback') and respuesta.prompt_feedback.block_reason:
+            return None
+            
+        # Verificar si hay texto en la respuesta
+        if hasattr(respuesta, 'text'):
+            return respuesta.text.strip()
+        else:
+            return None
+            
+    except Exception as e:
+        error_msg = str(e)
+        
+        # Guardar el error en session_state
+        st.session_state['ai_error'] = error_msg
+        
         return None
 
 
@@ -414,18 +466,42 @@ def calcular_metricas_periodo(ticker, indice_ticker, periodo_dias, tasa_libre_ri
 
 
 def generar_analisis_ai(prompt):
-    """Genera análisis con Gemini si está disponible, sino retorna None."""
+    """Genera análisis con AI si está disponible, sino retorna None."""
     if not GEMINI_DISPONIBLE:
+        st.session_state['ai_error'] = "API Key no configurada"
         return None
     
     try:
-        modelo = genai.GenerativeModel("gemini-1.5-flash")
+        modelo = genai.GenerativeModel("gemini-2.5-flash")
         respuesta = modelo.generate_content(prompt)
-        return respuesta.text.strip()
-    except Exception as e:
-        if "429" in str(e) or "quota" in str(e).lower() or "rate" in str(e).lower():
+        
+        # Verificar si la respuesta está bloqueada
+        if hasattr(respuesta, 'prompt_feedback') and respuesta.prompt_feedback.block_reason:
+            st.session_state['ai_error'] = f"Contenido bloqueado: {respuesta.prompt_feedback.block_reason}"
             return None
-        return None
+            
+        # Verificar si hay texto en la respuesta
+        if hasattr(respuesta, 'text'):
+            return respuesta.text.strip()
+        else:
+            st.session_state['ai_error'] = "Respuesta sin texto"
+            return None
+            
+    except Exception as e:
+        error_msg = str(e)
+        
+        # Guardar el error en session_state para debugging
+        st.session_state['ai_error'] = error_msg
+        
+        if "429" in error_msg or "quota" in error_msg.lower() or "resource_exhausted" in error_msg.lower():
+            st.session_state['ai_error'] = "Límite de cuota alcanzado"
+            return None
+        elif "api_key" in error_msg.lower() or "invalid" in error_msg.lower():
+            st.session_state['ai_error'] = "API Key inválida"
+            return None
+        else:
+            # Para otros errores, mostrar el mensaje completo
+            return None
 
 
 # -----------------------------
@@ -1441,7 +1517,14 @@ else:
                             </div>
                         """, unsafe_allow_html=True)
                     else:
-                        st.info("No se pudo generar el análisis de sentimiento.")
+                        error_msg = st.session_state.get('ai_error', 'Error desconocido')
+                        
+                        if error_msg and ('cuota' in error_msg.lower() or 'quota' in error_msg.lower() or 'exhausted' in error_msg.lower()):
+                            st.info("🤖 Límite de cuota alcanzado. Intenta más tarde.")
+                        elif error_msg and 'api_key' in error_msg.lower():
+                            st.warning("🤖 Error de configuración de API Key.")
+                        else:
+                            st.info("🤖 No se pudo generar el análisis de sentimiento.")
                 else:
                     st.warning("Análisis de IA no disponible.")
         else:
@@ -1498,7 +1581,18 @@ Da la respuesta en formato plano, sin asteriscos ni formato markdown. Supón que
                     unsafe_allow_html=True
                 )
             else:
-                st.info("🤖 **Análisis de IA no disponible:** El límite de requests de Gemini se ha alcanzado. Por favor, intenta más tarde.")
+                # Mostrar el error específico si está disponible
+                error_msg = st.session_state.get('ai_error', 'Error desconocido')
+                
+                if 'cuota' in error_msg.lower() or 'quota' in error_msg.lower() or 'exhausted' in error_msg.lower():
+                    st.info("🤖 **Análisis de IA no disponible:** El límite de requests de Gemini se ha alcanzado. Por favor, intenta más tarde.")
+                elif 'api_key' in error_msg.lower():
+                    st.error("🤖 **Error de configuración:** La API Key de Gemini no es válida. Por favor contacta al administrador.")
+                elif 'bloqueado' in error_msg.lower():
+                    st.warning(f"🤖 **Contenido bloqueado:** {error_msg}")
+                else:
+                    st.error(f"🤖 **Error al generar análisis:** {error_msg}")
+                    st.caption("Si el problema persiste, por favor contacta al administrador.")
 
             st.markdown("---")
 
@@ -1572,7 +1666,18 @@ Da la respuesta en formato plano, sin asteriscos ni formato markdown. Hasta el f
                         unsafe_allow_html=True
                     )
                 else:
-                    st.info("🤖 **Análisis comparativo de IA no disponible:** El límite de requests de Gemini se ha alcanzado. Por favor, intenta más tarde.")
+                    # Mostrar el error específico si está disponible
+                    error_msg = st.session_state.get('ai_error', 'Error desconocido')
+                    
+                    if 'cuota' in error_msg.lower() or 'quota' in error_msg.lower() or 'exhausted' in error_msg.lower():
+                        st.info("🤖 **Análisis comparativo de IA no disponible:** El límite de requests de Gemini se ha alcanzado. Por favor, intenta más tarde.")
+                    elif 'api_key' in error_msg.lower():
+                        st.error("🤖 **Error de configuración:** La API Key de Gemini no es válida. Por favor contacta al administrador.")
+                    elif 'bloqueado' in error_msg.lower():
+                        st.warning(f"🤖 **Contenido bloqueado:** {error_msg}")
+                    else:
+                        st.error(f"🤖 **Error al generar análisis comparativo:** {error_msg}")
+                        st.caption("Si el problema persiste, por favor contacta al administrador.")
 
         else:
             st.info("🤖 **Análisis de IA no disponible:** El servicio de Gemini AI está temporalmente deshabilitado debido al límite de requests. Todos los gráficos, métricas y datos financieros están disponibles y funcionando correctamente.")
