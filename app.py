@@ -18,18 +18,31 @@ GEMINI_DISPONIBLE = True
 GEMINI_ERROR_INIT = None
 
 try:
-    # Solo verificar que la API key existe, sin hacer llamadas que consuman cuota
-    api_key = st.secrets["GEMINI_API_KEY"]
+    # Verificar que st.secrets está disponible
+    if not hasattr(st, 'secrets'):
+        raise ValueError("st.secrets no está disponible. Asegúrate de estar usando Streamlit correctamente.")
+    
+    # Intentar obtener la API key
+    api_key = st.secrets.get("GEMINI_API_KEY", None)
+    
+    if api_key is None:
+        raise KeyError("GEMINI_API_KEY no encontrada en secrets")
+    
+    # Validar que la API key no esté vacía
+    api_key = str(api_key).strip()
     if not api_key or len(api_key) < 10:
-        raise ValueError("API Key vacía o inválida")
+        raise ValueError(f"API Key inválida (longitud: {len(api_key)})")
+    
+    # Configurar Gemini
     genai.configure(api_key=api_key)
     # No hacer llamada de prueba para no consumir cuota
-except KeyError:
+    
+except KeyError as e:
     GEMINI_DISPONIBLE = False
-    GEMINI_ERROR_INIT = "API Key no configurada en secrets"
+    GEMINI_ERROR_INIT = f"API Key no configurada en secrets: {str(e)}"
 except Exception as e:
     GEMINI_DISPONIBLE = False
-    GEMINI_ERROR_INIT = str(e)
+    GEMINI_ERROR_INIT = f"Error al configurar Gemini: {type(e).__name__} - {str(e)}"
 
 # Inicializar session_state
 if "ticker" not in st.session_state:
@@ -512,7 +525,33 @@ st.caption("Análisis profesional con Yahoo Finance, Finviz y Gemini AI")
 
 # Mostrar advertencia si Gemini no está disponible
 if not GEMINI_DISPONIBLE:
-    st.warning("⚠️ **Funcionalidad limitada:** El servicio de IA (Gemini) no está disponible actualmente debido a límite de requests. La app funcionará con todas las métricas y gráficos, pero sin análisis de IA ni traducciones.")
+    if GEMINI_ERROR_INIT:
+        st.error(f"⚠️ **IA no disponible:** {GEMINI_ERROR_INIT}")
+        with st.expander("ℹ️ Ver información de depuración"):
+            st.markdown("""
+            **Pasos para configurar la API Key en Streamlit Cloud:**
+            
+            1. Ve a tu app en Streamlit Cloud
+            2. Click en **Settings** (⚙️) en la esquina superior derecha
+            3. Click en **Secrets** en el menú lateral
+            4. Agrega el siguiente contenido (exactamente con este formato):
+            
+            ```toml
+            GEMINI_API_KEY = "tu-api-key-aquí"
+            ```
+            
+            **IMPORTANTE:**
+            - El nombre debe ser GEMINI_API_KEY (sin comillas)
+            - Debe haber UN ESPACIO antes y después del signo =
+            - El valor de la API key DEBE estar entre comillas
+            - No debe haber otros caracteres o espacios adicionales
+            
+            5. Click en **Save**
+            6. La app se reiniciará automáticamente
+            """)
+    else:
+        st.warning("⚠️ **Funcionalidad limitada:** El servicio de IA (Gemini) no está disponible actualmente. La app funcionará con todas las métricas y gráficos, pero sin análisis de IA ni traducciones.")
+
 
 st.markdown("---")
 
