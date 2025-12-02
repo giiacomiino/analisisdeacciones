@@ -1,12 +1,14 @@
 import streamlit as st
-import yfinance as yf
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-from datetime import datetime
+from datetime import datetime, timedelta
 import google.generativeai as genai
 import requests
 from bs4 import BeautifulSoup
+import json
+import re
+import time
 
 # -----------------------------
 # CONFIGURACIÓN INICIAL
@@ -33,8 +35,13 @@ if "ticker" not in st.session_state:
 if "analizar" not in st.session_state:
     st.session_state["analizar"] = False
 
+# Headers para requests
+HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+}
+
 # -----------------------------
-# FUNCIONES AUXILIARES
+# FUNCIONES DE SCRAPING
 # -----------------------------
 
 @st.cache_data(ttl=600)
@@ -54,33 +61,273 @@ def obtener_tasa_libre_riesgo():
     return 0.10
 
 @st.cache_data(ttl=600)
-def descargar_datos_historicos(ticker, period="1y", interval="1d"):
-    """Descarga datos históricos de Yahoo Finance."""
+def scrape_yahoo_summary(ticker):
+    """Scrapea datos generales de Yahoo Finance."""
     try:
-        datos = yf.download(ticker, period=period, interval=interval, progress=False)
-        return datos
-    except:
+        url = f"https://finance.yahoo.com/quote/{ticker}"
+        response = requests.get(url, headers=HEADERS, timeout=10)
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        info = {}
+        
+        # Precio actual
+        try:
+            price_elem = soup.find('fin-streamer', {'data-field': 'regularMarketPrice'})
+            if price_elem:
+                info['currentPrice'] = float(price_elem.text.replace(',', ''))
+        except:
+            info['currentPrice'] = 0
+        
+        # Nombre de la empresa
+        try:
+            name_elem = soup.find('h1', {'class': 'yf-xxbei9'})
+            if name_elem:
+                info['longName'] = name_elem.text.split('(')[0].strip()
+        except:
+            info['longName'] = ticker
+        
+        # Tabla de datos
+        try:
+            tables = soup.find_all('table')
+            for table in tables:
+                rows = table.find_all('tr')
+                for row in rows:
+                    cols = row.find_all('td')
+                    if len(cols) >= 2:
+                        label = cols[0].text.strip()
+                        value = cols[1].text.strip()
+                        
+                        if label == 'Market Cap':
+                            info['marketCap'] = parse_value(value)
+                        elif label == 'PE Ratio (TTM)' or label == 'P/E Ratio':
+                            info['trailingPE'] = parse_float(value)
+                        elif label == 'Beta (5Y Monthly)' or label == 'Beta':
+                            info['beta'] = parse_float(value)
+                        elif label == 'EPS (TTM)':
+                            info['trailingEps'] = parse_float(value)
+                        elif label == '52 Week High':
+                            info['fiftyTwoWeekHigh'] = parse_float(value)
+                        elif label == '52 Week Low':
+                            info['fiftyTwoWeekLow'] = parse_float(value)
+                        elif label == 'Volume' or label == 'Avg. Volume':
+                            if 'volume' not in info:
+                                info['volume'] = parse_value(value)
+                            else:
+                                info['averageVolume'] = parse_value(value)
+                        elif label == 'Forward Dividend & Yield' or label == 'Dividend Yield':
+                            try:
+                                if '%' in value:
+                                    info['dividendYield'] = parse_float(value.split('(')[1].replace('%)', '')) / 100
+                                else:
+                                    info['dividendYield'] = parse_float(value) / 100
+                            except:
+                                info['dividendYield'] = 0
+        except:
+            pass
+        
+        return info
+    except Exception as e:
+        st.error(f"Error scraping summary: {e}")
+        return {}
+
+@st.cache_data(ttl=600)
+def scrape_yahoo_statistics(ticker):
+    """Scrapea estadísticas detalladas de Yahoo Finance."""
+    try:
+        url = f"https://finance.yahoo.com/quote/{ticker}/key-statistics"
+        response = requests.get(url, headers=HEADERS, timeout=10)
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        stats = {}
+        
+        tables = soup.find_all('table')
+        for table in tables:
+            rows = table.find_all('tr')
+            for row in rows:
+                cols = row.find_all('td')
+                if len(cols) >= 2:
+                    label = cols[0].text.strip()
+                    value = cols[1].text.strip()
+                    
+                    if 'Return on Equity' in label or 'ROE' in label:
+                        stats['returnOnEquity'] = parse_float(value) / 100
+                    elif 'Return on Assets' in label or 'ROA' in label:
+                        stats['returnOnAssets'] = parse_float(value) / 100
+                    elif 'Profit Margin' in label:
+                        stats['profitMargins'] = parse_float(value) / 100
+                    elif 'Gross Margin' in label:
+                        stats['grossMargins'] = parse_float(value) / 100
+                    elif 'Operating Margin' in label:
+                        stats['operatingMargins'] = parse_float(value) / 100
+                    elif 'Total Debt/Equity' in label:
+                        stats['debtToEquity'] = parse_float(value)
+                    elif 'Current Ratio' in label:
+                        stats['currentRatio'] = parse_float(value)
+        
+        return stats
+    except Exception as e:
+        st.error(f"Error scraping statistics: {e}")
+        return {}
+
+@st.cache_data(ttl=600)
+def scrape_yahoo_profile(ticker):
+    """Scrapea perfil de la empresa de Yahoo Finance."""
+    try:
+        url = f"https://finance.yahoo.com/quote/{ticker}/profile"
+        response = requests.get(url, headers=HEADERS, timeout=10)
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        profile = {}
+        
+        # Descripción
+        try:
+            desc_section = soup.find('section', {'data-testid': 'description'})
+            if desc_section:
+                desc_p = desc_section.find('p')
+                if desc_p:
+                    profile['longBusinessSummary'] = desc_p.text.strip()
+        except:
+            pass
+        
+        # Datos de la tabla
+        try:
+            tables = soup.find_all('table')
+            for table in tables:
+                rows = table.find_all('tr')
+                for row in rows:
+                    cols = row.find_all('td')
+                    if len(cols) >= 2:
+                        label = cols[0].text.strip()
+                        value = cols[1].text.strip()
+                        
+                        if 'Sector' in label:
+                            profile['sector'] = value
+                        elif 'Industry' in label:
+                            profile['industry'] = value
+                        elif 'Full Time Employees' in label or 'Employees' in label:
+                            profile['fullTimeEmployees'] = parse_value(value)
+                        elif 'Country' in label:
+                            profile['country'] = value
+        except:
+            pass
+        
+        return profile
+    except Exception as e:
+        st.error(f"Error scraping profile: {e}")
+        return {}
+
+@st.cache_data(ttl=600)
+def scrape_yahoo_financials(ticker):
+    """Scrapea estados financieros de Yahoo Finance."""
+    try:
+        url = f"https://finance.yahoo.com/quote/{ticker}/financials"
+        response = requests.get(url, headers=HEADERS, timeout=10)
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        financials = {}
+        
+        tables = soup.find_all('table')
+        for table in tables:
+            rows = table.find_all('tr')
+            for row in rows:
+                cols = row.find_all('td')
+                if len(cols) >= 2:
+                    label = cols[0].text.strip()
+                    value = cols[1].text.strip()
+                    
+                    if 'Total Revenue' in label:
+                        financials['totalRevenue'] = parse_value(value)
+                    elif 'Net Income' in label and 'Common' in label:
+                        financials['netIncomeToCommon'] = parse_value(value)
+                    elif 'Free Cash Flow' in label or 'Operating Cash Flow' in label:
+                        if 'freeCashflow' not in financials:
+                            financials['freeCashflow'] = parse_value(value)
+        
+        return financials
+    except Exception as e:
+        st.error(f"Error scraping financials: {e}")
+        return {}
+
+@st.cache_data(ttl=3600)
+def scrape_historical_data(ticker, period_days=365):
+    """Scrapea datos históricos de Yahoo Finance."""
+    try:
+        end_timestamp = int(time.time())
+        start_timestamp = end_timestamp - (period_days * 24 * 60 * 60)
+        
+        url = f"https://query1.finance.yahoo.com/v7/finance/download/{ticker}?period1={start_timestamp}&period2={end_timestamp}&interval=1d&events=history"
+        
+        response = requests.get(url, headers=HEADERS, timeout=15)
+        
+        if response.status_code == 200:
+            from io import StringIO
+            df = pd.read_csv(StringIO(response.text))
+            df['Date'] = pd.to_datetime(df['Date'])
+            df.set_index('Date', inplace=True)
+            return df
+        else:
+            return pd.DataFrame()
+    except Exception as e:
+        st.error(f"Error scraping historical data: {e}")
         return pd.DataFrame()
 
-def extraer_precios_columna(df):
-    """Extrae la columna Close de un DataFrame."""
-    if df.empty:
-        return pd.Series(dtype=float)
+def parse_value(value_str):
+    """Convierte valores como '1.5T', '234.5B', '45.6M' a números."""
+    try:
+        value_str = value_str.replace(',', '').replace('$', '').strip()
+        
+        if 'T' in value_str:
+            return float(value_str.replace('T', '')) * 1e12
+        elif 'B' in value_str:
+            return float(value_str.replace('B', '')) * 1e9
+        elif 'M' in value_str:
+            return float(value_str.replace('M', '')) * 1e6
+        elif 'K' in value_str:
+            return float(value_str.replace('K', '')) * 1e3
+        else:
+            return float(value_str)
+    except:
+        return 0
+
+def parse_float(value_str):
+    """Convierte string a float."""
+    try:
+        return float(value_str.replace(',', '').replace('%', '').replace('$', '').strip())
+    except:
+        return 0
+
+def get_complete_info(ticker):
+    """Obtiene información completa combinando todos los scrapers."""
+    info = {}
     
-    if isinstance(df.columns, pd.MultiIndex):
-        close_col = df["Close"].iloc[:, 0]
-    else:
-        close_col = df["Close"]
+    # Summary
+    summary = scrape_yahoo_summary(ticker)
+    info.update(summary)
     
-    return close_col.dropna()
+    # Statistics
+    stats = scrape_yahoo_statistics(ticker)
+    info.update(stats)
+    
+    # Profile
+    profile = scrape_yahoo_profile(ticker)
+    info.update(profile)
+    
+    # Financials
+    financials = scrape_yahoo_financials(ticker)
+    info.update(financials)
+    
+    return info
+
+# -----------------------------
+# FUNCIONES AUXILIARES
+# -----------------------------
 
 @st.cache_data(ttl=600)
 def buscar_empresas_detallado(query):
     """Busca empresas usando Yahoo Finance Search."""
     try:
         url = f"https://query2.finance.yahoo.com/v1/finance/search?q={query}&quotesCount=10&newsCount=0"
-        headers = {"User-Agent": "Mozilla/5.0"}
-        response = requests.get(url, headers=headers, timeout=10)
+        response = requests.get(url, headers=HEADERS, timeout=10)
         
         if response.status_code == 200:
             data = response.json()
@@ -105,8 +352,7 @@ def obtener_peers_finviz(ticker):
     """Obtiene competidores desde Finviz."""
     try:
         url = f"https://finviz.com/quote.ashx?t={ticker}"
-        headers = {"User-Agent": "Mozilla/5.0"}
-        response = requests.get(url, headers=headers, timeout=10)
+        response = requests.get(url, headers=HEADERS, timeout=10)
         
         if response.status_code == 200:
             soup = BeautifulSoup(response.content, "html.parser")
@@ -131,7 +377,7 @@ def obtener_kpis_peers(ticker_actual, peers):
         
         for t in tickers:
             try:
-                info = yf.Ticker(t).info
+                info = get_complete_info(t)
                 data.append({
                     "Ticker": t,
                     "Empresa": info.get("longName", t),
@@ -149,73 +395,88 @@ def obtener_kpis_peers(ticker_actual, peers):
         return pd.DataFrame()
 
 @st.cache_data(ttl=600)
-def obtener_income_yahoo(ticker):
-    """Obtiene Income Statement de Yahoo Finance."""
+def scrape_yahoo_income_statement(ticker):
+    """Scrapea Income Statement."""
     try:
-        stock = yf.Ticker(ticker)
-        df = stock.financials.T
-        df.index = df.index.strftime('%Y-%m-%d')
-        df = df.reset_index()
-        df.rename(columns={"index": "Fecha"}, inplace=True)
-        return df
+        url = f"https://finance.yahoo.com/quote/{ticker}/financials"
+        response = requests.get(url, headers=HEADERS, timeout=10)
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        # Extraer tabla
+        tables = soup.find_all('table')
+        if tables:
+            dfs = pd.read_html(str(tables[0]))
+            if dfs:
+                df = dfs[0]
+                return df
     except:
-        return pd.DataFrame()
+        pass
+    return pd.DataFrame()
 
 @st.cache_data(ttl=600)
-def obtener_balance_yahoo(ticker):
-    """Obtiene Balance Sheet de Yahoo Finance."""
+def scrape_yahoo_balance_sheet(ticker):
+    """Scrapea Balance Sheet."""
     try:
-        stock = yf.Ticker(ticker)
-        df = stock.balance_sheet.T
-        df.index = df.index.strftime('%Y-%m-%d')
-        df = df.reset_index()
-        df.rename(columns={"index": "Fecha"}, inplace=True)
-        return df
+        url = f"https://finance.yahoo.com/quote/{ticker}/balance-sheet"
+        response = requests.get(url, headers=HEADERS, timeout=10)
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        tables = soup.find_all('table')
+        if tables:
+            dfs = pd.read_html(str(tables[0]))
+            if dfs:
+                df = dfs[0]
+                return df
     except:
-        return pd.DataFrame()
+        pass
+    return pd.DataFrame()
 
 @st.cache_data(ttl=600)
-def obtener_cashflow_yahoo(ticker):
-    """Obtiene Cash Flow de Yahoo Finance."""
+def scrape_yahoo_cash_flow(ticker):
+    """Scrapea Cash Flow."""
     try:
-        stock = yf.Ticker(ticker)
-        df = stock.cashflow.T
-        df.index = df.index.strftime('%Y-%m-%d')
-        df = df.reset_index()
-        df.rename(columns={"index": "Fecha"}, inplace=True)
-        return df
+        url = f"https://finance.yahoo.com/quote/{ticker}/cash-flow"
+        response = requests.get(url, headers=HEADERS, timeout=10)
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        tables = soup.find_all('table')
+        if tables:
+            dfs = pd.read_html(str(tables[0]))
+            if dfs:
+                df = dfs[0]
+                return df
     except:
-        return pd.DataFrame()
+        pass
+    return pd.DataFrame()
 
 @st.cache_data(ttl=600)
-def obtener_noticias_yf(ticker):
-    """Obtiene noticias desde Yahoo Finance."""
+def scrape_yahoo_news(ticker):
+    """Scrapea noticias de Yahoo Finance."""
     try:
-        stock = yf.Ticker(ticker)
-        return stock.news[:10]
+        url = f"https://finance.yahoo.com/quote/{ticker}/news"
+        response = requests.get(url, headers=HEADERS, timeout=10)
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        news = []
+        articles = soup.find_all('h3')[:10]
+        
+        for article in articles:
+            link_tag = article.find('a')
+            if link_tag:
+                title = link_tag.text.strip()
+                link = link_tag.get('href', '')
+                if link and not link.startswith('http'):
+                    link = 'https://finance.yahoo.com' + link
+                
+                news.append({
+                    'title': title,
+                    'link': link,
+                    'publisher': 'Yahoo Finance'
+                })
+        
+        return news
     except:
         return []
-
-@st.cache_data(ttl=600)
-def obtener_financial_insights_yf(ticker):
-    """Obtiene Financial Insights de Yahoo Finance."""
-    try:
-        info = yf.Ticker(ticker).info
-        return info.get('longBusinessSummary', '')[:500]
-    except:
-        return None
-
-@st.cache_data(ttl=600)
-def obtener_financial_insights_peers(peers):
-    """Obtiene insights de peers."""
-    insights = {}
-    for p in peers[:5]:
-        try:
-            info = yf.Ticker(p).info
-            insights[p] = info.get('longBusinessSummary', '')[:200]
-        except:
-            continue
-    return insights
 
 def traducir_descripcion(texto, idioma):
     """Traduce texto usando Gemini."""
@@ -223,7 +484,7 @@ def traducir_descripcion(texto, idioma):
         return texto
     
     try:
-        modelo = genai.GenerativeModel("gemini-2.0-flash-exp")
+        modelo = genai.GenerativeModel("gemini-2.5-flash")
         prompt = f"Traduce el siguiente texto a {idioma}, mantén el mismo tono profesional:\n\n{texto}"
         respuesta = modelo.generate_content(prompt)
         
@@ -252,7 +513,7 @@ Proporciona en máximo 100 palabras:
 
 Responde en formato plano sin markdown."""
 
-        modelo = genai.GenerativeModel("gemini-2.0-flash-exp")
+        modelo = genai.GenerativeModel("gemini-2.5-flash")
         respuesta = modelo.generate_content(prompt)
         
         if hasattr(respuesta, 'text') and respuesta.text:
@@ -294,11 +555,14 @@ def calcular_indicadores(df):
 def calcular_metricas_periodo(ticker, indice_ticker, periodo_dias, tasa_libre_riesgo):
     """Calcula métricas de rendimiento y riesgo para un periodo específico."""
     try:
-        datos_ticker = descargar_datos_historicos(ticker, period="5y", interval="1d")
-        datos_indice = descargar_datos_historicos(indice_ticker, period="5y", interval="1d")
+        datos_ticker = scrape_historical_data(ticker, 1825)
+        datos_indice = scrape_historical_data(indice_ticker, 1825)
 
-        precios_ticker = extraer_precios_columna(datos_ticker).dropna()
-        precios_indice = extraer_precios_columna(datos_indice).dropna()
+        if datos_ticker.empty or datos_indice.empty:
+            return None
+
+        precios_ticker = datos_ticker['Close'].dropna()
+        precios_indice = datos_indice['Close'].dropna()
 
         precios_ticker, precios_indice = precios_ticker.align(precios_indice, join="inner")
         
@@ -341,7 +605,7 @@ def generar_analisis_ai(prompt):
         return None
     
     try:
-        modelo = genai.GenerativeModel("gemini-2.0-flash-exp")
+        modelo = genai.GenerativeModel("gemini-2.5-flash")
         respuesta = modelo.generate_content(
             prompt,
             generation_config=genai.types.GenerationConfig(
@@ -427,7 +691,8 @@ if st.session_state["ticker"] is None:
             ticker = item["ticker"]
 
             try:
-                sector = yf.Ticker(ticker).info.get("sector", "N/A")
+                info = get_complete_info(ticker)
+                sector = info.get("sector", "N/A")
             except:
                 sector = "N/A"
 
@@ -496,8 +761,8 @@ else:
         tasa_libre_riesgo = obtener_tasa_libre_riesgo()
         
         try:
-            ticker_info = yf.Ticker(ticker_final)
-            info = ticker_info.info
+            with st.spinner("Obteniendo información de la empresa..."):
+                info = get_complete_info(ticker_final)
 
             if not info:
                 raise ValueError("No se pudo obtener información del ticker")
@@ -506,7 +771,7 @@ else:
             st.error(f"❌ No se pudo cargar la información del ticker: {e}")
             st.stop()
 
-        financial_insights = obtener_financial_insights_yf(ticker_final)
+        financial_insights = info.get('longBusinessSummary', '')[:500]
 
         if financial_insights:
             st.subheader("✨ Insights Financieros")
@@ -643,7 +908,7 @@ else:
         
         col1, col2, col3, col4, col5 = st.columns(5)
         
-        precio_actual = info.get('currentPrice') or info.get('regularMarketPrice', 0)
+        precio_actual = info.get('currentPrice', 0)
         col1.markdown(f"""
             <div class="metric-card" data-tooltip="{tooltips['precio']}">
                 <div class="metric-label">💵 Precio Actual</div>
@@ -885,7 +1150,8 @@ else:
         peers = obtener_peers_finviz(ticker_final)
 
         if peers:
-            df_comp = obtener_kpis_peers(ticker_final, peers)
+            with st.spinner("Obteniendo datos de competidores..."):
+                df_comp = obtener_kpis_peers(ticker_final, peers)
 
             if not df_comp.empty:
                 def highlight(row):
@@ -901,13 +1167,13 @@ else:
 
         with col_periodo:
             periodo_velas_opciones = {
-                "1 Mes": "1mo",
-                "3 Meses": "3mo",
-                "6 Meses": "6mo",
-                "1 Año": "1y",
-                "2 Años": "2y",
-                "3 Años": "3y",
-                "5 Años": "5y"
+                "1 Mes": 30,
+                "3 Meses": 90,
+                "6 Meses": 180,
+                "1 Año": 365,
+                "2 Años": 730,
+                "3 Años": 1095,
+                "5 Años": 1825
             }
             
             periodo_velas_sel = st.selectbox(
@@ -917,27 +1183,11 @@ else:
                 key="periodo_velas"
             )
 
-        datos = descargar_datos_historicos(ticker_final, period=periodo_velas_opciones[periodo_velas_sel], interval="1d")
+        with st.spinner("Descargando datos históricos..."):
+            datos = scrape_historical_data(ticker_final, periodo_velas_opciones[periodo_velas_sel])
 
         if not datos.empty:
-            if isinstance(datos.columns, pd.MultiIndex):
-                open_col = datos["Open"].iloc[:, 0]
-                high_col = datos["High"].iloc[:, 0]
-                low_col = datos["Low"].iloc[:, 0]
-                close_col = datos["Close"].iloc[:, 0]
-                df_ind = pd.DataFrame({
-                    "Open": open_col,
-                    "High": high_col,
-                    "Low": low_col,
-                    "Close": close_col
-                })
-            else:
-                open_col = datos["Open"]
-                high_col = datos["High"]
-                low_col = datos["Low"]
-                close_col = datos["Close"]
-                df_ind = datos.copy()
-
+            df_ind = datos.copy()
             df_ind = calcular_indicadores(df_ind)
 
             st.markdown("##### 🛠️ Indicadores Técnicos")
@@ -1028,40 +1278,42 @@ else:
         st.subheader("📈 Rendimiento Comparativo vs Índice")
 
         try:
-            datos_ticker = descargar_datos_historicos(ticker_final, period="1y", interval="1d")
-            indice_t = indices_dict[indice_select]
-            datos_indice = descargar_datos_historicos(indice_t, period="1y", interval="1d")
+            with st.spinner("Calculando rendimientos..."):
+                datos_ticker = scrape_historical_data(ticker_final, 365)
+                indice_t = indices_dict[indice_select]
+                datos_indice = scrape_historical_data(indice_t, 365)
 
-            precios_ticker = extraer_precios_columna(datos_ticker)
-            precios_indice = extraer_precios_columna(datos_indice)
+            if not datos_ticker.empty and not datos_indice.empty:
+                precios_ticker = datos_ticker['Close']
+                precios_indice = datos_indice['Close']
 
-            precios_ticker, precios_indice = precios_ticker.align(precios_indice, join="inner")
+                precios_ticker, precios_indice = precios_ticker.align(precios_indice, join="inner")
 
-            rendimiento_ticker = ((precios_ticker / precios_ticker.iloc[0]) - 1) * 100
-            rendimiento_indice = ((precios_indice / precios_indice.iloc[0]) - 1) * 100
+                rendimiento_ticker = ((precios_ticker / precios_ticker.iloc[0]) - 1) * 100
+                rendimiento_indice = ((precios_indice / precios_indice.iloc[0]) - 1) * 100
 
-            fig_comp = go.Figure()
-            fig_comp.add_trace(go.Scatter(
-                x=rendimiento_ticker.index, y=rendimiento_ticker.values,
-                mode="lines", name=ticker_final, line=dict(color="#1E8BC3", width=3),
-                fill='tonexty', fillcolor='rgba(30, 139, 195, 0.1)'
-            ))
-            fig_comp.add_trace(go.Scatter(
-                x=rendimiento_indice.index, y=rendimiento_indice.values,
-                mode="lines", name=indice_select, line=dict(color="#E67E22", width=3, dash="dot")
-            ))
+                fig_comp = go.Figure()
+                fig_comp.add_trace(go.Scatter(
+                    x=rendimiento_ticker.index, y=rendimiento_ticker.values,
+                    mode="lines", name=ticker_final, line=dict(color="#1E8BC3", width=3),
+                    fill='tonexty', fillcolor='rgba(30, 139, 195, 0.1)'
+                ))
+                fig_comp.add_trace(go.Scatter(
+                    x=rendimiento_indice.index, y=rendimiento_indice.values,
+                    mode="lines", name=indice_select, line=dict(color="#E67E22", width=3, dash="dot")
+                ))
 
-            fig_comp.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5)
+                fig_comp.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5)
 
-            fig_comp.update_layout(
-                title=f"{ticker_final} vs {indice_select} (Base 0)", 
-                template="plotly_white", 
-                height=500,
-                yaxis_title="Rendimiento (%)",
-                xaxis_title="Fecha",
-                hovermode='x unified'
-            )
-            st.plotly_chart(fig_comp, use_container_width=True)
+                fig_comp.update_layout(
+                    title=f"{ticker_final} vs {indice_select} (Base 0)", 
+                    template="plotly_white", 
+                    height=500,
+                    yaxis_title="Rendimiento (%)",
+                    xaxis_title="Fecha",
+                    hovermode='x unified'
+                )
+                st.plotly_chart(fig_comp, use_container_width=True)
 
         except Exception as e:
             st.warning(f"No fue posible generar la comparativa: {e}")
@@ -1072,52 +1324,53 @@ else:
             st.subheader("📊 Rendimiento vs Competidores (Último Año)")
 
             try:
-                fig_peers = go.Figure()
-                
-                datos_main = descargar_datos_historicos(ticker_final, period="1y", interval="1d")
-                precios_main = extraer_precios_columna(datos_main)
-                rendimiento_main = ((precios_main / precios_main.iloc[0]) - 1) * 100
-                
-                fig_peers.add_trace(go.Scatter(
-                    x=rendimiento_main.index,
-                    y=rendimiento_main.values,
-                    mode="lines",
-                    name=ticker_final,
-                    line=dict(color="#1E8BC3", width=4)
-                ))
+                with st.spinner("Comparando con competidores..."):
+                    fig_peers = go.Figure()
+                    
+                    datos_main = scrape_historical_data(ticker_final, 365)
+                    precios_main = datos_main['Close']
+                    rendimiento_main = ((precios_main / precios_main.iloc[0]) - 1) * 100
+                    
+                    fig_peers.add_trace(go.Scatter(
+                        x=rendimiento_main.index,
+                        y=rendimiento_main.values,
+                        mode="lines",
+                        name=ticker_final,
+                        line=dict(color="#1E8BC3", width=4)
+                    ))
 
-                colores_peers = ["#E67E22", "#26A65B", "#8E44AD", "#C0392B", "#F39C12"]
-                for i, peer in enumerate(peers[:5]):
-                    try:
-                        datos_peer = descargar_datos_historicos(peer, period="1y", interval="1d")
-                        precios_peer = extraer_precios_columna(datos_peer)
-                        
-                        if not precios_peer.empty:
-                            rendimiento_peer = ((precios_peer / precios_peer.iloc[0]) - 1) * 100
+                    colores_peers = ["#E67E22", "#26A65B", "#8E44AD", "#C0392B", "#F39C12"]
+                    for i, peer in enumerate(peers[:5]):
+                        try:
+                            datos_peer = scrape_historical_data(peer, 365)
+                            precios_peer = datos_peer['Close']
                             
-                            fig_peers.add_trace(go.Scatter(
-                                x=rendimiento_peer.index,
-                                y=rendimiento_peer.values,
-                                mode="lines",
-                                name=peer,
-                                line=dict(color=colores_peers[i % len(colores_peers)], width=2, dash="dot")
-                            ))
-                    except:
-                        continue
+                            if not precios_peer.empty:
+                                rendimiento_peer = ((precios_peer / precios_peer.iloc[0]) - 1) * 100
+                                
+                                fig_peers.add_trace(go.Scatter(
+                                    x=rendimiento_peer.index,
+                                    y=rendimiento_peer.values,
+                                    mode="lines",
+                                    name=peer,
+                                    line=dict(color=colores_peers[i % len(colores_peers)], width=2, dash="dot")
+                                ))
+                        except:
+                            continue
 
-                fig_peers.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5)
+                    fig_peers.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5)
 
-                fig_peers.update_layout(
-                    title=f"Rendimiento Comparativo: {ticker_final} vs Peers (Base 0)",
-                    template="plotly_white",
-                    height=550,
-                    yaxis_title="Rendimiento (%)",
-                    xaxis_title="Fecha",
-                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-                    hovermode='x unified'
-                )
-                
-                st.plotly_chart(fig_peers, use_container_width=True)
+                    fig_peers.update_layout(
+                        title=f"Rendimiento Comparativo: {ticker_final} vs Peers (Base 0)",
+                        template="plotly_white",
+                        height=550,
+                        yaxis_title="Rendimiento (%)",
+                        xaxis_title="Fecha",
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                        hovermode='x unified'
+                    )
+                    
+                    st.plotly_chart(fig_peers, use_container_width=True)
 
             except Exception as e:
                 st.warning(f"No fue posible generar la comparativa con peers: {e}")
@@ -1146,7 +1399,8 @@ else:
         periodo_dias = periodo_opciones[periodo_sel]
         indice_t = indices_dict[indice_select]
         
-        metricas = calcular_metricas_periodo(ticker_final, indice_t, periodo_dias, tasa_libre_riesgo)
+        with st.spinner("Calculando métricas..."):
+            metricas = calcular_metricas_periodo(ticker_final, indice_t, periodo_dias, tasa_libre_riesgo)
         
         if metricas:
             st.markdown("""
@@ -1228,7 +1482,8 @@ else:
         
         with tab1:
             st.caption("Estado de Resultados")
-            df_income = obtener_income_yahoo(ticker_final)
+            with st.spinner("Obteniendo Income Statement..."):
+                df_income = scrape_yahoo_income_statement(ticker_final)
             if not df_income.empty:
                 st.dataframe(df_income, use_container_width=True, hide_index=True)
                 csv = df_income.to_csv(index=False).encode('utf-8')
@@ -1238,7 +1493,8 @@ else:
                 
         with tab2:
             st.caption("Balance General")
-            df_balance = obtener_balance_yahoo(ticker_final)
+            with st.spinner("Obteniendo Balance Sheet..."):
+                df_balance = scrape_yahoo_balance_sheet(ticker_final)
             if not df_balance.empty:
                 st.dataframe(df_balance, use_container_width=True, hide_index=True)
                 csv = df_balance.to_csv(index=False).encode('utf-8')
@@ -1248,7 +1504,8 @@ else:
 
         with tab3:
             st.caption("Flujo de Efectivo")
-            df_cash = obtener_cashflow_yahoo(ticker_final)
+            with st.spinner("Obteniendo Cash Flow..."):
+                df_cash = scrape_yahoo_cash_flow(ticker_final)
             if not df_cash.empty:
                 st.dataframe(df_cash, use_container_width=True, hide_index=True)
                 csv = df_cash.to_csv(index=False).encode('utf-8')
@@ -1260,7 +1517,8 @@ else:
 
         st.subheader("📰 Noticias y Sentimiento de Mercado")
         
-        noticias = obtener_noticias_yf(ticker_final)
+        with st.spinner("Obteniendo noticias..."):
+            noticias = scrape_yahoo_news(ticker_final)
         
         if noticias:
             col_news, col_sentiment = st.columns([3, 2])
@@ -1368,12 +1626,19 @@ Da la respuesta en formato plano, sin asteriscos ni formato markdown. Supón que
             if peers:
                 st.subheader(f"🔬 Análisis Comparativo con Competidores ({idioma})")
                 
-                peers_insights = obtener_financial_insights_peers(peers[:5])
+                with st.spinner("Obteniendo información de competidores..."):
+                    peers_insights = {}
+                    for p in peers[:5]:
+                        try:
+                            p_info = get_complete_info(p)
+                            peers_insights[p] = p_info.get('longBusinessSummary', '')[:200]
+                        except:
+                            continue
                 
                 peers_data = []
                 for p in peers[:5]:
                     try:
-                        p_info = yf.Ticker(p).info
+                        p_info = get_complete_info(p)
                         peers_data.append({
                             "ticker": p,
                             "name": p_info.get('longName', p),
@@ -1448,7 +1713,7 @@ Da la respuesta en formato plano, sin asteriscos ni formato markdown. Hasta el f
 
         st.markdown("""
         <div style='text-align:center; color:gray; font-size:11px; margin-top: 40px;'>
-        📊 <b>Fuentes:</b> Yahoo Finance, Finviz & Banxico | 🤖 <b>IA:</b> Gemini 2.0 Flash<br>
-        🎓 Ingeniería Financiera | 💻 Versión 4.4 | ⚖️ Solo para uso educativo
+        📊 <b>Fuentes:</b> Yahoo Finance, Finviz & Banxico | 🤖 <b>IA:</b> Gemini 2.5 Flash<br>
+        🎓 Ingeniería Financiera | 💻 Versión 5.0 - Web Scraping | ⚖️ Solo para uso educativo
         </div>
         """, unsafe_allow_html=True)
