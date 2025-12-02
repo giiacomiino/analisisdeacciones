@@ -1,425 +1,289 @@
 import streamlit as st
 import yfinance as yf
-import plotly.graph_objects as go
 import pandas as pd
 import numpy as np
+import plotly.graph_objects as go
+from datetime import datetime
+import google.generativeai as genai
 import requests
 from bs4 import BeautifulSoup
-import google.generativeai as genai
-from datetime import datetime
 
 # -----------------------------
-# CONFIGURACIÓN
+# CONFIGURACIÓN INICIAL
 # -----------------------------
-st.set_page_config(page_title="Análisis Integral de Acciones", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Análisis de Acciones", page_icon="📊", layout="wide")
 
-# Verificar disponibilidad de Gemini
-GEMINI_DISPONIBLE = True
+# Configurar Gemini
+GEMINI_DISPONIBLE = False
 GEMINI_ERROR_INIT = None
 
 try:
-    # Verificar que st.secrets está disponible
-    if not hasattr(st, 'secrets'):
-        raise ValueError("st.secrets no está disponible. Asegúrate de estar usando Streamlit correctamente.")
-    
-    # Intentar obtener la API key
-    api_key = st.secrets.get("GEMINI_API_KEY", None)
-    
-    if api_key is None:
-        raise KeyError("GEMINI_API_KEY no encontrada en secrets")
-    
-    # Validar que la API key no esté vacía
-    api_key = str(api_key).strip()
-    if not api_key or len(api_key) < 10:
-        raise ValueError(f"API Key inválida (longitud: {len(api_key)})")
-    
-    # Configurar Gemini
-    genai.configure(api_key=api_key)
-    # No hacer llamada de prueba para no consumir cuota
-    
-except KeyError as e:
-    GEMINI_DISPONIBLE = False
-    GEMINI_ERROR_INIT = f"API Key no configurada en secrets: {str(e)}"
+    api_key = st.secrets.get("GEMINI_API_KEY")
+    if api_key:
+        genai.configure(api_key=api_key)
+        GEMINI_DISPONIBLE = True
+    else:
+        GEMINI_ERROR_INIT = "No se encontró GEMINI_API_KEY en secrets"
 except Exception as e:
-    GEMINI_DISPONIBLE = False
-    GEMINI_ERROR_INIT = f"Error al configurar Gemini: {type(e).__name__} - {str(e)}"
+    GEMINI_ERROR_INIT = str(e)
 
-# Inicializar session_state
+# Session State
 if "ticker" not in st.session_state:
     st.session_state["ticker"] = None
 if "analizar" not in st.session_state:
     st.session_state["analizar"] = False
-if "ai_error" not in st.session_state:
-    st.session_state["ai_error"] = None
 
 # -----------------------------
-# FUNCIONES
+# FUNCIONES AUXILIARES
 # -----------------------------
-@st.cache_data(ttl=86400)
+
+@st.cache_data(ttl=600)
 def obtener_tasa_libre_riesgo():
-    """Obtiene la tasa CETES 28 desde Banxico como proxy de tasa libre de riesgo."""
+    """Obtiene la tasa de CETES a 28 días desde Banxico."""
     try:
-        url = "https://www.banxico.org.mx/"
+        url = "https://www.banxico.org.mx/SieAPIRest/service/v1/series/SF43936/datos/oportuno"
+        headers = {"Bmx-Token": "TU_TOKEN_AQUI"}
+        response = requests.get(url, headers=headers, timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            tasa = float(data['bmx']['series'][0]['datos'][0]['dato'])
+            return tasa / 100
+    except:
+        pass
+    return 0.10
+
+@st.cache_data(ttl=600)
+def descargar_datos_historicos(ticker, period="1y", interval="1d"):
+    """Descarga datos históricos de Yahoo Finance."""
+    try:
+        datos = yf.download(ticker, period=period, interval=interval, progress=False)
+        return datos
+    except:
+        return pd.DataFrame()
+
+def extraer_precios_columna(df):
+    """Extrae la columna Close de un DataFrame."""
+    if df.empty:
+        return pd.Series(dtype=float)
+    
+    if isinstance(df.columns, pd.MultiIndex):
+        close_col = df["Close"].iloc[:, 0]
+    else:
+        close_col = df["Close"]
+    
+    return close_col.dropna()
+
+@st.cache_data(ttl=600)
+def buscar_empresas_detallado(query):
+    """Busca empresas usando Yahoo Finance Search."""
+    try:
+        url = f"https://query2.finance.yahoo.com/v1/finance/search?q={query}&quotesCount=10&newsCount=0"
         headers = {"User-Agent": "Mozilla/5.0"}
         response = requests.get(url, headers=headers, timeout=10)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.text, "html.parser")
         
-        # Buscar el div de CETES 28
-        cetes_div = soup.find("div", {"id": "dv_singleCetes28"})
-        if cetes_div:
-            valor_span = cetes_div.find("span", class_="valor")
-            if valor_span:
-                tasa = float(valor_span.get_text(strip=True))
-                return tasa / 100  # Convertir a decimal
-        
-        return 0.07  # Default 7% si no se puede obtener
+        if response.status_code == 200:
+            data = response.json()
+            quotes = data.get("quotes", [])
+            
+            resultados = []
+            for q in quotes:
+                if q.get("isYahooFinance", False):
+                    resultados.append({
+                        "ticker": q.get("symbol", "N/A"),
+                        "nombre": q.get("longname") or q.get("shortname", "N/A"),
+                        "pais": q.get("exchDisp", "N/A")
+                    })
+            
+            return resultados
     except:
-        return 0.07
+        pass
+    return []
 
-
-@st.cache_data(ttl=3600)
-def buscar_empresas_detallado(nombre):
-    """Busca empresas en Yahoo Finance y devuelve nombre, ticker, precio, país y logo."""
-    try:
-        url = "https://query1.finance.yahoo.com/v1/finance/search"
-        params = {"q": nombre, "quotes_count": 8, "news_count": 0}
-        headers = {"User-Agent": "Mozilla/5.0"}
-        
-        r = requests.get(url, params=params, headers=headers, timeout=10)
-        r.raise_for_status()
-        data = r.json()
-
-        resultados = []
-        for item in data.get("quotes", []):
-            ticker = item.get("symbol")
-            nombre = item.get("shortname") or item.get("longname")
-            if not ticker or not nombre:
-                continue
-
-            try:
-                info = yf.Ticker(ticker).info
-                precio = info.get("currentPrice", "N/A")
-                pais = info.get("country", "N/A")
-                logo = info.get("logo_url", None)
-            except:
-                precio, pais, logo = "N/A", "N/A", None
-
-            resultados.append({
-                "ticker": ticker,
-                "nombre": nombre,
-                "precio": precio,
-                "pais": pais,
-                "logo": logo
-            })
-
-        return resultados
-    except:
-        return []
-
-
-@st.cache_data(ttl=86400)
+@st.cache_data(ttl=600)
 def obtener_peers_finviz(ticker):
+    """Obtiene competidores desde Finviz."""
     try:
         url = f"https://finviz.com/quote.ashx?t={ticker}"
         headers = {"User-Agent": "Mozilla/5.0"}
         response = requests.get(url, headers=headers, timeout=10)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.text, "html.parser")
-        peers_div = soup.find("div", class_="flex-1 max-w-max truncate")
-        if not peers_div:
-            return []
-        links = peers_div.find_all("a", class_="tab-link")
-        return list(dict.fromkeys([a.get_text(strip=True) for a in links if a.get_text(strip=True).isupper()]))
-    except:
-        return []
-
-
-@st.cache_data(ttl=86400)
-def obtener_financial_insights_yf(ticker):
-    try:
-        url = f"https://finance.yahoo.com/quote/{ticker}"
-        headers = {"User-Agent": "Mozilla/5.0"}
-        response = requests.get(url, headers=headers, timeout=10)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.text, "html.parser")
-
-        insights_div = soup.find("div", {"class": "summary yf-1lj2fxg"})
-        if insights_div:
-            return insights_div.get_text(strip=True)
-
-        h2_financials = soup.find("h2", string=lambda x: x and "Financials" in x)
-        if h2_financials:
-            parent = h2_financials.find_parent()
-            if parent:
-                summary = parent.find("p")
-                if summary:
-                    return summary.get_text(strip=True)
-
-        return None
-    except:
-        return None
-
-
-@st.cache_data(ttl=86400)
-def obtener_financial_insights_peers(peers_tickers):
-    insights_dict = {}
-    for t in peers_tickers:
-        insight = obtener_financial_insights_yf(t)
-        if insight:
-            insights_dict[t] = insight
-    return insights_dict
-
-
-@st.cache_data(ttl=86400)
-def obtener_income_yahoo(ticker):
-    try:
-        t = yf.Ticker(ticker)
-        df = t.financials
-        claves = ["Total Revenue", "Cost Of Revenue", "Gross Profit", "Operating Income", "Net Income", "EBIT", "EBITDA"]
-        if df.empty:
-            return pd.DataFrame()
-        # Filtrar solo claves que existen en el índice
-        claves_existentes = [c for c in claves if c in df.index]
-        df = df.loc[claves_existentes].reindex(claves).fillna(0).astype(float).T
-        df.index = [i.strftime("%Y-%m-%d") for i in df.index]
-        data = []
-        for m in df.columns:
-            vals = [
-                f"{v/1e9:,.1f} B" if abs(v) >= 1e9 else
-                f"{v/1e6:,.0f} M" if abs(v) >= 1e6 else
-                f"{v:,.0f}"
-                for v in df[m]
-            ]
-            data.append([m] + vals)
-        return pd.DataFrame(data, columns=["Métrica"] + list(df.index))
-    except:
-        return pd.DataFrame()
-
-
-@st.cache_data(ttl=86400)
-def obtener_balance_yahoo(ticker):
-    try:
-        t = yf.Ticker(ticker)
-        df = t.balance_sheet
-        claves = ["Total Assets", "Total Liabilities Net Minority Interest", "Total Equity Gross Minority Interest", "Total Debt", "Net Debt"]
-        if df.empty:
-            return pd.DataFrame()
-        claves_existentes = [c for c in claves if c in df.index]
-        df = df.loc[claves_existentes].reindex(claves).fillna(0).astype(float).T
-        df.index = [i.strftime("%Y-%m-%d") for i in df.index]
-        data = []
-        for m in df.columns:
-            vals = [
-                f"{v/1e9:,.1f} B" if abs(v) >= 1e9 else
-                f"{v/1e6:,.0f} M" if abs(v) >= 1e6 else
-                f"{v:,.0f}"
-                for v in df[m]
-            ]
-            data.append([m] + vals)
-        return pd.DataFrame(data, columns=["Métrica"] + list(df.index))
-    except:
-        return pd.DataFrame()
-
-
-@st.cache_data(ttl=86400)
-def obtener_cashflow_yahoo(ticker):
-    try:
-        t = yf.Ticker(ticker)
-        df = t.cashflow
-        claves = ["Operating Cash Flow", "Investing Cash Flow", "Financing Cash Flow", "Free Cash Flow"]
-        if df.empty:
-            return pd.DataFrame()
-        claves_existentes = [c for c in claves if c in df.index]
-        df = df.loc[claves_existentes].reindex(claves).fillna(0).astype(float).T
-        df.index = [i.strftime("%Y-%m-%d") for i in df.index]
-        data = []
-        for m in df.columns:
-            vals = [
-                f"{v/1e9:,.1f} B" if abs(v) >= 1e9 else
-                f"{v/1e6:,.0f} M" if abs(v) >= 1e6 else
-                f"{v:,.0f}"
-                for v in df[m]
-            ]
-            data.append([m] + vals)
-        return pd.DataFrame(data, columns=["Métrica"] + list(df.index))
-    except:
-        return pd.DataFrame()
-
-
-def traducir_descripcion(texto, idioma_destino):
-    """Traduce texto solo si Gemini está disponible."""
-    if not GEMINI_DISPONIBLE:
-        return texto
-    
-    if idioma_destino == "Inglés" or not texto or texto == "Descripción no disponible.":
-        return texto
-    try:
-        modelo = genai.GenerativeModel("gemini-2.5-flash")
-        respuesta = modelo.generate_content(f"Traduce al {idioma_destino}: {texto}")
-        return respuesta.text.strip()
-    except:
-        return texto
-
-
-@st.cache_data(ttl=86400)
-def obtener_kpis_peers(ticker, peers_list):
-    resultados = []
-    for t in [ticker] + peers_list[:5]:
-        try:
-            info = yf.Ticker(t).info
-            resultados.append({
-                "Ticker": t,
-                "Nombre": info.get('longName', info.get('shortName', t)),
-                "Market Cap (B)": f"{info.get('marketCap', 0)/1e9:.2f}" if info.get('marketCap') else "N/A",
-                "P/E": f"{info.get('trailingPE', 0):.2f}" if info.get('trailingPE') else "N/A",
-                "EPS": f"{info.get('trailingEps', 0):.2f}" if info.get('trailingEps') else "N/A",
-                "Beta": f"{info.get('beta', 0):.2f}" if info.get('beta') else "N/A",
-                "ROE (%)": f"{info.get('returnOnEquity', 0)*100:.2f}" if info.get('returnOnEquity') else "N/A",
-                "Gross Margin (%)": f"{info.get('grossMargins', 0)*100:.2f}" if info.get('grossMargins') else "N/A",
-                "Profit Margin (%)": f"{info.get('profitMargins', 0)*100:.2f}" if info.get('profitMargins') else "N/A",
-                "Debt/Equity": f"{info.get('debtToEquity', 0)/100:.2f}" if info.get('debtToEquity') else "N/A",
-                "Dividend Yield (%)": f"{info.get('dividendYield', 0)*100:.2f}" if info.get('dividendYield') else "0.00",
-                "Revenue TTM (B)": f"{info.get('totalRevenue', 0)/1e9:.2f}" if info.get('totalRevenue') else "N/A"
-            })
-        except:
-            continue
-    return pd.DataFrame(resultados)
-
-
-def extraer_precios_columna(datos):
-    """Extrae la columna de precios correctamente sin importar si es MultiIndex o no."""
-    if datos.empty:
-        return pd.Series(dtype=float)
-    
-    if isinstance(datos.columns, pd.MultiIndex):
-        if "Adj Close" in datos.columns.get_level_values(0):
-            col = datos["Adj Close"]
-        else:
-            col = datos["Close"]
         
-        if isinstance(col, pd.DataFrame):
-            return col.iloc[:, 0].astype(float)
-        else:
-            return col.astype(float)
-    else:
-        if "Adj Close" in datos.columns:
-            return datos["Adj Close"].astype(float)
-        else:
-            return datos["Close"].astype(float)
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.content, "html.parser")
+            peers_cell = soup.find("td", string="Industry")
+            
+            if peers_cell:
+                peers_row = peers_cell.find_next_sibling("td")
+                if peers_row:
+                    links = peers_row.find_all("a")
+                    peers = [link.text.strip() for link in links if link.text.strip()]
+                    return peers[:5]
+    except:
+        pass
+    return []
 
-
-@st.cache_data(ttl=3600)
-def descargar_datos_historicos(ticker, period, interval):
-    return yf.download(ticker, period=period, interval=interval, progress=False)
-
-
-@st.cache_data(ttl=3600)
-def obtener_noticias_yf(ticker):
-    """Obtiene noticias recientes de Yahoo Finance."""
+@st.cache_data(ttl=600)
+def obtener_kpis_peers(ticker_actual, peers):
+    """Obtiene KPIs de peers para comparación."""
     try:
-        t = yf.Ticker(ticker)
-        news = t.news
+        tickers = [ticker_actual] + peers[:5]
+        data = []
         
-        if not news:
-            return []
-        
-        # Procesar las noticias al nuevo formato
-        noticias_procesadas = []
-        for item in news:
+        for t in tickers:
             try:
-                # El nuevo formato tiene estructura anidada
-                if isinstance(item, dict):
-                    # Extraer contenido principal
-                    content = item.get('content', {})
-                    
-                    noticia = {
-                        'title': content.get('title', 'Sin título'),
-                        'link': content.get('canonicalUrl', {}).get('url', content.get('clickThroughUrl', {}).get('url', '#')),
-                        'publisher': content.get('provider', {}).get('displayName', 'Desconocido'),
-                        'published': content.get('pubDate', ''),
-                        'summary': content.get('summary', '')
-                    }
-                    noticias_procesadas.append(noticia)
-            except Exception as e:
-                # Si hay error procesando una noticia específica, continuar con las demás
+                info = yf.Ticker(t).info
+                data.append({
+                    "Ticker": t,
+                    "Empresa": info.get("longName", t),
+                    "Market Cap (B)": f"${info.get('marketCap', 0)/1e9:.1f}",
+                    "P/E": f"{info.get('trailingPE', 0):.2f}",
+                    "ROE (%)": f"{info.get('returnOnEquity', 0)*100:.1f}",
+                    "Profit Margin (%)": f"{info.get('profitMargins', 0)*100:.1f}",
+                    "Beta": f"{info.get('beta', 0):.2f}"
+                })
+            except:
                 continue
         
-        return noticias_procesadas if noticias_procesadas else []
-    except Exception as e:
+        return pd.DataFrame(data)
+    except:
+        return pd.DataFrame()
+
+@st.cache_data(ttl=600)
+def obtener_income_yahoo(ticker):
+    """Obtiene Income Statement de Yahoo Finance."""
+    try:
+        stock = yf.Ticker(ticker)
+        df = stock.financials.T
+        df.index = df.index.strftime('%Y-%m-%d')
+        df = df.reset_index()
+        df.rename(columns={"index": "Fecha"}, inplace=True)
+        return df
+    except:
+        return pd.DataFrame()
+
+@st.cache_data(ttl=600)
+def obtener_balance_yahoo(ticker):
+    """Obtiene Balance Sheet de Yahoo Finance."""
+    try:
+        stock = yf.Ticker(ticker)
+        df = stock.balance_sheet.T
+        df.index = df.index.strftime('%Y-%m-%d')
+        df = df.reset_index()
+        df.rename(columns={"index": "Fecha"}, inplace=True)
+        return df
+    except:
+        return pd.DataFrame()
+
+@st.cache_data(ttl=600)
+def obtener_cashflow_yahoo(ticker):
+    """Obtiene Cash Flow de Yahoo Finance."""
+    try:
+        stock = yf.Ticker(ticker)
+        df = stock.cashflow.T
+        df.index = df.index.strftime('%Y-%m-%d')
+        df = df.reset_index()
+        df.rename(columns={"index": "Fecha"}, inplace=True)
+        return df
+    except:
+        return pd.DataFrame()
+
+@st.cache_data(ttl=600)
+def obtener_noticias_yf(ticker):
+    """Obtiene noticias desde Yahoo Finance."""
+    try:
+        stock = yf.Ticker(ticker)
+        return stock.news[:10]
+    except:
         return []
 
+@st.cache_data(ttl=600)
+def obtener_financial_insights_yf(ticker):
+    """Obtiene Financial Insights de Yahoo Finance."""
+    try:
+        info = yf.Ticker(ticker).info
+        return info.get('longBusinessSummary', '')[:500]
+    except:
+        return None
+
+@st.cache_data(ttl=600)
+def obtener_financial_insights_peers(peers):
+    """Obtiene insights de peers."""
+    insights = {}
+    for p in peers[:5]:
+        try:
+            info = yf.Ticker(p).info
+            insights[p] = info.get('longBusinessSummary', '')[:200]
+        except:
+            continue
+    return insights
+
+def traducir_descripcion(texto, idioma):
+    """Traduce texto usando Gemini."""
+    if not GEMINI_DISPONIBLE or not texto:
+        return texto
+    
+    try:
+        modelo = genai.GenerativeModel("gemini-2.0-flash-exp")
+        prompt = f"Traduce el siguiente texto a {idioma}, mantén el mismo tono profesional:\n\n{texto}"
+        respuesta = modelo.generate_content(prompt)
+        
+        if hasattr(respuesta, 'text') and respuesta.text:
+            return respuesta.text.strip()
+        return texto
+    except:
+        return texto
 
 def analizar_sentimiento_gemini(ticker, noticias):
-    """Analiza el sentimiento de las noticias usando Gemini."""
+    """Analiza sentimiento de noticias con Gemini."""
     if not GEMINI_DISPONIBLE or not noticias:
         return None
     
-    headlines = [n.get('title', '') for n in noticias[:10]]
-    headlines_text = "\n".join([f"- {h}" for h in headlines])
-    
-    prompt = f"""
-    Analiza el sentimiento de mercado para {ticker} basado en estos titulares recientes:
-    {headlines_text}
-    
-    Clasifica el sentimiento general como: POSITIVO, NEUTRAL o NEGATIVO.
-    Provee un resumen muy breve (máximo 50 palabras) explicando por qué.
-    Formato de respuesta:
-    SENTIMIENTO: [SENTIMIENTO]
-    RESUMEN: [Resumen]
-    """
-    
     try:
-        modelo = genai.GenerativeModel("gemini-2.5-flash")
+        titulares = "\n".join([f"- {n.get('title', '')}" for n in noticias[:5]])
+        
+        prompt = f"""Analiza el sentimiento de mercado para {ticker} basado en estos titulares:
+
+{titulares}
+
+Proporciona en máximo 100 palabras:
+1. Sentimiento general (POSITIVO/NEGATIVO/NEUTRAL)
+2. Temas clave identificados
+3. Implicación para inversores
+
+Responde en formato plano sin markdown."""
+
+        modelo = genai.GenerativeModel("gemini-2.0-flash-exp")
         respuesta = modelo.generate_content(prompt)
         
-        # Verificar si la respuesta está bloqueada
-        if hasattr(respuesta, 'prompt_feedback') and respuesta.prompt_feedback.block_reason:
-            return None
-            
-        # Verificar si hay texto en la respuesta
-        if hasattr(respuesta, 'text'):
+        if hasattr(respuesta, 'text') and respuesta.text:
             return respuesta.text.strip()
-        else:
-            return None
-            
-    except Exception as e:
-        error_msg = str(e)
-        
-        # Guardar el error en session_state
-        st.session_state['ai_error'] = error_msg
-        
         return None
-
+    except:
+        return None
 
 def calcular_indicadores(df):
     """Calcula indicadores técnicos básicos."""
     if df.empty:
         return df
     
-    # SMA
     df['SMA_20'] = df['Close'].rolling(window=20).mean()
     df['SMA_50'] = df['Close'].rolling(window=50).mean()
     df['SMA_200'] = df['Close'].rolling(window=200).mean()
     
-    # EMA
     df['EMA_20'] = df['Close'].ewm(span=20, adjust=False).mean()
     df['EMA_50'] = df['Close'].ewm(span=50, adjust=False).mean()
     
-    # RSI
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
     rs = gain / loss
     df['RSI'] = 100 - (100 / (1 + rs))
     
-    # MACD
     exp1 = df['Close'].ewm(span=12, adjust=False).mean()
     exp2 = df['Close'].ewm(span=26, adjust=False).mean()
     df['MACD'] = exp1 - exp2
     df['Signal_Line'] = df['MACD'].ewm(span=9, adjust=False).mean()
     
-    # Bollinger Bands
     df['BB_Middle'] = df['Close'].rolling(window=20).mean()
     df['BB_Std'] = df['Close'].rolling(window=20).std()
     df['BB_Upper'] = df['BB_Middle'] + (2 * df['BB_Std'])
@@ -430,17 +294,14 @@ def calcular_indicadores(df):
 def calcular_metricas_periodo(ticker, indice_ticker, periodo_dias, tasa_libre_riesgo):
     """Calcula métricas de rendimiento y riesgo para un periodo específico."""
     try:
-        # Descargar datos
         datos_ticker = descargar_datos_historicos(ticker, period="5y", interval="1d")
         datos_indice = descargar_datos_historicos(indice_ticker, period="5y", interval="1d")
 
         precios_ticker = extraer_precios_columna(datos_ticker).dropna()
         precios_indice = extraer_precios_columna(datos_indice).dropna()
 
-        # Alinear datos
         precios_ticker, precios_indice = precios_ticker.align(precios_indice, join="inner")
         
-        # Filtrar por periodo
         if periodo_dias == "YTD":
             inicio = datetime(datetime.now().year, 1, 1)
             pp = precios_ticker[precios_ticker.index >= inicio]
@@ -452,18 +313,15 @@ def calcular_metricas_periodo(ticker, indice_ticker, periodo_dias, tasa_libre_ri
         if len(pp) < 10:
             return None
 
-        # Calcular retornos
         rp = pp.pct_change().dropna()
         ri = pi.pct_change().dropna()
 
-        # Métricas
         rendimiento = ((pp.iloc[-1] / pp.iloc[0]) - 1) * 100
         volatilidad = rp.std() * np.sqrt(252) * 100
         beta = np.cov(rp, ri)[0, 1] / np.var(ri) if np.var(ri) != 0 else 0
         rend_ind = ((pi.iloc[-1] / pi.iloc[0]) - 1) * 100
         alpha = rendimiento - (beta * rend_ind)
         
-        # Sharpe Ratio con tasa libre de riesgo
         rendimiento_anual = rp.mean() * 252
         sharpe = (rendimiento_anual - tasa_libre_riesgo) / (rp.std() * np.sqrt(252)) if rp.std() != 0 else 0
 
@@ -477,45 +335,33 @@ def calcular_metricas_periodo(ticker, indice_ticker, periodo_dias, tasa_libre_ri
     except:
         return None
 
-
 def generar_analisis_ai(prompt):
     """Genera análisis con AI si está disponible, sino retorna None."""
     if not GEMINI_DISPONIBLE:
-        st.session_state['ai_error'] = "API Key no configurada"
         return None
     
     try:
-        modelo = genai.GenerativeModel("gemini-2.5-flash")
-        respuesta = modelo.generate_content(prompt)
+        modelo = genai.GenerativeModel("gemini-2.0-flash-exp")
+        respuesta = modelo.generate_content(
+            prompt,
+            generation_config=genai.types.GenerationConfig(
+                temperature=0.7,
+                max_output_tokens=1000,
+            )
+        )
         
-        # Verificar si la respuesta está bloqueada
-        if hasattr(respuesta, 'prompt_feedback') and respuesta.prompt_feedback.block_reason:
-            st.session_state['ai_error'] = f"Contenido bloqueado: {respuesta.prompt_feedback.block_reason}"
-            return None
-            
-        # Verificar si hay texto en la respuesta
-        if hasattr(respuesta, 'text'):
+        if hasattr(respuesta, 'text') and respuesta.text:
             return respuesta.text.strip()
-        else:
-            st.session_state['ai_error'] = "Respuesta sin texto"
-            return None
-            
+        return None
     except Exception as e:
         error_msg = str(e)
-        
-        # Guardar el error en session_state para debugging
-        st.session_state['ai_error'] = error_msg
-        
         if "429" in error_msg or "quota" in error_msg.lower() or "resource_exhausted" in error_msg.lower():
             st.session_state['ai_error'] = "Límite de cuota alcanzado"
-            return None
         elif "api_key" in error_msg.lower() or "invalid" in error_msg.lower():
             st.session_state['ai_error'] = "API Key inválida"
-            return None
         else:
-            # Para otros errores, mostrar el mensaje completo
-            return None
-
+            st.session_state['ai_error'] = error_msg
+        return None
 
 # -----------------------------
 # ENCABEZADO PRINCIPAL
@@ -523,7 +369,6 @@ def generar_analisis_ai(prompt):
 st.title("📊 Análisis Integral de Acciones")
 st.caption("Análisis profesional con Yahoo Finance, Finviz y Gemini AI")
 
-# Mostrar advertencia si Gemini no está disponible
 if not GEMINI_DISPONIBLE:
     if GEMINI_ERROR_INIT:
         st.error(f"⚠️ **IA no disponible:** {GEMINI_ERROR_INIT}")
@@ -535,10 +380,9 @@ if not GEMINI_DISPONIBLE:
             2. Click en **Settings** (⚙️) en la esquina superior derecha
             3. Click en **Secrets** en el menú lateral
             4. Agrega el siguiente contenido (exactamente con este formato):
-            
-            ```toml
+```toml
             GEMINI_API_KEY = "tu-api-key-aquí"
-            ```
+```
             
             **IMPORTANTE:**
             - El nombre debe ser GEMINI_API_KEY (sin comillas)
@@ -550,8 +394,7 @@ if not GEMINI_DISPONIBLE:
             6. La app se reiniciará automáticamente
             """)
     else:
-        st.warning("⚠️ **Funcionalidad limitada:** El servicio de IA (Gemini) no está disponible actualmente. La app funcionará con todas las métricas y gráficos, pero sin análisis de IA ni traducciones.")
-
+        st.warning("⚠️ **Funcionalidad limitada:** El servicio de IA (Gemini) no está disponible actualmente.")
 
 st.markdown("---")
 
@@ -560,7 +403,6 @@ st.markdown("---")
 # -----------------------------
 
 if st.session_state["ticker"] is None:
-    # MODO BÚSQUEDA
     st.subheader("🔎 Buscar Empresa / Ticker")
 
     busqueda = st.text_input(
@@ -605,10 +447,8 @@ if st.session_state["ticker"] is None:
                     st.rerun()
 
 else:
-    # MODO ANÁLISIS
     ticker_final = st.session_state["ticker"]
     
-    # Configuración solo muestra idioma si Gemini está disponible
     if GEMINI_DISPONIBLE:
         col_ticker, col_indice, col_idioma, col_reset = st.columns([3, 2, 2, 1])
     else:
@@ -646,19 +486,13 @@ else:
 
     st.markdown("---")
 
-    # BOTÓN ANALIZAR
     if not st.session_state.get("analizar", False):
         if st.button("🚀 Analizar", type="primary", use_container_width=True):
             st.session_state["analizar"] = True
             st.rerun()
 
-    # ======================================================
-    # ANÁLISIS COMPLETO
-    # ======================================================
-
     if st.session_state.get("analizar", False):
         
-        # Obtener tasa libre de riesgo
         tasa_libre_riesgo = obtener_tasa_libre_riesgo()
         
         try:
@@ -672,10 +506,6 @@ else:
             st.error(f"❌ No se pudo cargar la información del ticker: {e}")
             st.stop()
 
-
-        # ==============================
-        # FINANCIAL INSIGHTS DE YAHOO FINANCE
-        # ==============================
         financial_insights = obtener_financial_insights_yf(ticker_final)
 
         if financial_insights:
@@ -695,13 +525,8 @@ else:
             )
             st.markdown("---")
 
-
-        # ==============================
-        # INFORMACIÓN GENERAL - DISEÑO MEJORADO
-        # ==============================
         st.subheader("🏢 Información General")
         
-        # Card principal con información de la empresa
         st.markdown(f"""
             <div style='background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
                         padding: 30px; border-radius: 15px; color: white;
@@ -733,10 +558,6 @@ else:
 
         st.markdown("---")
 
-
-        # ==============================
-        # MÉTRICAS BURSÁTILES
-        # ==============================
         st.subheader("📈 Métricas Bursátiles")
         
         st.markdown("""
@@ -750,13 +571,12 @@ else:
                 box-shadow: 0 6px 20px rgba(0,0,0,0.25);
                 margin-bottom: 15px;
                 transition: all 0.3s ease;
-                position: relative; /* Necesario para el tooltip */
+                position: relative;
             }
             .metric-card:hover {
                 transform: translateY(-5px);
                 box-shadow: 0 10px 30px rgba(0,0,0,0.35);
             }
-            /* Tooltip CSS */
             .metric-card[data-tooltip]:hover::after {
                 content: attr(data-tooltip);
                 position: absolute;
@@ -780,7 +600,6 @@ else:
             @keyframes fadeIn {
                 to { opacity: 1; }
             }
-            /* Triángulo del tooltip */
             .metric-card[data-tooltip]:hover::before {
                 content: '';
                 position: absolute;
@@ -790,7 +609,7 @@ else:
                 border-width: 6px;
                 border-style: solid;
                 border-color: #333 transparent transparent transparent;
-                margin-bottom: -2px; /* Ajuste fino */
+                margin-bottom: -2px;
                 opacity: 0;
                 animation: fadeIn 0.3s forwards;
             }
@@ -809,7 +628,6 @@ else:
             </style>
         """, unsafe_allow_html=True)
         
-        # Diccionario de definiciones
         tooltips = {
             "precio": "El precio actual de una acción en el mercado.",
             "market_cap": "Capitalización de Mercado: Valor total de todas las acciones de la empresa (Precio x Acciones en circulación).",
@@ -825,7 +643,6 @@ else:
         
         col1, col2, col3, col4, col5 = st.columns(5)
         
-        # Precio Actual
         precio_actual = info.get('currentPrice') or info.get('regularMarketPrice', 0)
         col1.markdown(f"""
             <div class="metric-card" data-tooltip="{tooltips['precio']}">
@@ -834,7 +651,6 @@ else:
             </div>
         """, unsafe_allow_html=True)
         
-        # Market Cap
         market_cap = info.get('marketCap', 0)
         col2.markdown(f"""
             <div class="metric-card" data-tooltip="{tooltips['market_cap']}">
@@ -843,7 +659,6 @@ else:
             </div>
         """, unsafe_allow_html=True)
         
-        # P/E Ratio
         pe = info.get('trailingPE', 0)
         col3.markdown(f"""
             <div class="metric-card" data-tooltip="{tooltips['pe']}">
@@ -852,7 +667,6 @@ else:
             </div>
         """, unsafe_allow_html=True)
         
-        # Beta
         beta = info.get('beta', 0)
         col4.markdown(f"""
             <div class="metric-card" data-tooltip="{tooltips['beta']}">
@@ -861,7 +675,6 @@ else:
             </div>
         """, unsafe_allow_html=True)
         
-        # EPS
         eps = info.get('trailingEps', 0)
         col5.markdown(f"""
             <div class="metric-card" data-tooltip="{tooltips['eps']}">
@@ -870,10 +683,8 @@ else:
             </div>
         """, unsafe_allow_html=True)
         
-        # Segunda fila
         col1, col2, col3, col4, col5 = st.columns(5)
         
-        # 52 Week High
         high_52 = info.get('fiftyTwoWeekHigh', 0)
         col1.markdown(f"""
             <div class="metric-card" data-tooltip="{tooltips['high52']}">
@@ -882,7 +693,6 @@ else:
             </div>
         """, unsafe_allow_html=True)
         
-        # 52 Week Low
         low_52 = info.get('fiftyTwoWeekLow', 0)
         col2.markdown(f"""
             <div class="metric-card" data-tooltip="{tooltips['low52']}">
@@ -891,7 +701,6 @@ else:
             </div>
         """, unsafe_allow_html=True)
         
-        # Volume
         volume = info.get('volume', 0)
         col3.markdown(f"""
             <div class="metric-card" data-tooltip="{tooltips['volumen']}">
@@ -900,7 +709,6 @@ else:
             </div>
         """, unsafe_allow_html=True)
         
-        # Avg Volume
         avg_vol = info.get('averageVolume', 0)
         col4.markdown(f"""
             <div class="metric-card" data-tooltip="{tooltips['avg_vol']}">
@@ -909,7 +717,6 @@ else:
             </div>
         """, unsafe_allow_html=True)
         
-        # Dividend Yield
         div_yield = info.get('dividendYield', 0)
         col5.markdown(f"""
             <div class="metric-card" data-tooltip="{tooltips['div_yield']}">
@@ -920,10 +727,6 @@ else:
 
         st.markdown("---")
 
-
-        # ==============================
-        # MÉTRICAS CORPORATIVAS
-        # ==============================
         st.subheader("🏢 Métricas Corporativas")
         
         st.markdown("""
@@ -943,7 +746,6 @@ else:
                 transform: translateY(-5px);
                 box-shadow: 0 10px 30px rgba(0,0,0,0.35);
             }
-            /* Tooltip CSS para Corporate */
             .corporate-card[data-tooltip]:hover::after {
                 content: attr(data-tooltip);
                 position: absolute;
@@ -980,7 +782,6 @@ else:
             </style>
         """, unsafe_allow_html=True)
         
-        # Diccionario de definiciones corporativas
         corp_tooltips = {
             "revenue": "Ingresos totales de la empresa en los últimos 12 meses (TTM).",
             "net_income": "Utilidad Neta: Ganancia total después de todos los gastos e impuestos.",
@@ -996,7 +797,6 @@ else:
         
         col1, col2, col3, col4, col5 = st.columns(5)
         
-        # Revenue
         revenue = info.get('totalRevenue', 0)
         col1.markdown(f"""
             <div class="corporate-card" data-tooltip="{corp_tooltips['revenue']}">
@@ -1005,7 +805,6 @@ else:
             </div>
         """, unsafe_allow_html=True)
         
-        # Net Income
         net_income = info.get('netIncomeToCommon', 0)
         col2.markdown(f"""
             <div class="corporate-card" data-tooltip="{corp_tooltips['net_income']}">
@@ -1014,7 +813,6 @@ else:
             </div>
         """, unsafe_allow_html=True)
         
-        # ROE
         roe = info.get('returnOnEquity', 0)
         col3.markdown(f"""
             <div class="corporate-card" data-tooltip="{corp_tooltips['roe']}">
@@ -1023,7 +821,6 @@ else:
             </div>
         """, unsafe_allow_html=True)
         
-        # Profit Margin
         profit_margin = info.get('profitMargins', 0)
         col4.markdown(f"""
             <div class="corporate-card" data-tooltip="{corp_tooltips['profit_margin']}">
@@ -1032,7 +829,6 @@ else:
             </div>
         """, unsafe_allow_html=True)
         
-        # Gross Margin
         gross_margin = info.get('grossMargins', 0)
         col5.markdown(f"""
             <div class="corporate-card" data-tooltip="{corp_tooltips['gross_margin']}">
@@ -1041,10 +837,8 @@ else:
             </div>
         """, unsafe_allow_html=True)
 
-        # Segunda fila
         col1, col2, col3, col4, col5 = st.columns(5)
         
-        # Operating Margin
         op_margin = info.get('operatingMargins', 0)
         col1.markdown(f"""
             <div class="corporate-card" data-tooltip="{corp_tooltips['op_margin']}">
@@ -1053,7 +847,6 @@ else:
             </div>
         """, unsafe_allow_html=True)
         
-        # ROA
         roa = info.get('returnOnAssets', 0)
         col2.markdown(f"""
             <div class="corporate-card" data-tooltip="{corp_tooltips['roa']}">
@@ -1062,7 +855,6 @@ else:
             </div>
         """, unsafe_allow_html=True)
         
-        # Debt to Equity
         debt_equity = info.get('debtToEquity', 0)
         col3.markdown(f"""
             <div class="corporate-card" data-tooltip="{corp_tooltips['debt_equity']}">
@@ -1071,7 +863,6 @@ else:
             </div>
         """, unsafe_allow_html=True)
         
-        # Current Ratio
         current_ratio = info.get('currentRatio', 0)
         col4.markdown(f"""
             <div class="corporate-card" data-tooltip="{corp_tooltips['current_ratio']}">
@@ -1080,7 +871,6 @@ else:
             </div>
         """, unsafe_allow_html=True)
         
-        # Free Cash Flow
         fcf = info.get('freeCashflow', 0)
         col5.markdown(f"""
             <div class="corporate-card" data-tooltip="{corp_tooltips['fcf']}">
@@ -1091,10 +881,6 @@ else:
 
         st.markdown("---")
 
-
-        # ==============================
-        # COMPARACIÓN CON PEERS
-        # ==============================
         st.subheader("🔍 Comparación con Competidores")
         peers = obtener_peers_finviz(ticker_final)
 
@@ -1109,13 +895,8 @@ else:
 
                 st.markdown("---")
 
-
-        # ==============================
-        # GRÁFICO DE VELAS
-        # ==============================
         st.subheader("📊 Gráfico de Velas")
 
-        # Selector de periodo para el gráfico de velas
         col_periodo, col_espacio = st.columns([2, 4])
 
         with col_periodo:
@@ -1132,7 +913,7 @@ else:
             periodo_velas_sel = st.selectbox(
                 "Selecciona el periodo:",
                 list(periodo_velas_opciones.keys()),
-                index=3,  # Por defecto "1 Año"
+                index=3,
                 key="periodo_velas"
             )
 
@@ -1144,9 +925,6 @@ else:
                 high_col = datos["High"].iloc[:, 0]
                 low_col = datos["Low"].iloc[:, 0]
                 close_col = datos["Close"].iloc[:, 0]
-                datos_flat = datos.iloc[:, :4].copy() # Simplificación para indicadores
-                datos_flat.columns = ["Close", "High", "Low", "Open"] # Ajuste temporal, mejor usar nombres correctos
-                # Reconstruir DataFrame plano para indicadores
                 df_ind = pd.DataFrame({
                     "Open": open_col,
                     "High": high_col,
@@ -1160,10 +938,8 @@ else:
                 close_col = datos["Close"]
                 df_ind = datos.copy()
 
-            # Calcular indicadores
             df_ind = calcular_indicadores(df_ind)
 
-            # Selectores de indicadores
             st.markdown("##### 🛠️ Indicadores Técnicos")
             col_ind1, col_ind2, col_ind3, col_ind4 = st.columns(4)
             with col_ind1:
@@ -1175,7 +951,6 @@ else:
             with col_ind4:
                 show_osc = st.multiselect("Osciladores", ["RSI", "MACD"], key="osc_sel")
 
-            # Crear figura con subplots si es necesario
             rows = 1
             row_heights = [0.7]
             specs = [[{"secondary_y": False}]]
@@ -1189,7 +964,6 @@ else:
                 row_heights.append(0.15)
                 specs.append([{"secondary_y": False}])
             
-            # Normalizar alturas
             total_h = sum(row_heights)
             row_heights = [h/total_h for h in row_heights]
 
@@ -1197,7 +971,6 @@ else:
             fig = make_subplots(rows=rows, cols=1, shared_xaxes=True, 
                                 vertical_spacing=0.05, row_heights=row_heights)
 
-            # Velas
             fig.add_trace(go.Candlestick(
                 x=df_ind.index,
                 open=df_ind["Open"],
@@ -1209,21 +982,18 @@ else:
                 decreasing_line_color="#C0392B"
             ), row=1, col=1)
 
-            # SMA
             colors_sma = {"20": "#F1C40F", "50": "#E67E22", "200": "#3498DB"}
             for per in show_sma:
                 if f'SMA_{per}' in df_ind.columns:
                     fig.add_trace(go.Scatter(x=df_ind.index, y=df_ind[f'SMA_{per}'], mode='lines', 
                                             name=f'SMA {per}', line=dict(color=colors_sma.get(per, "white"), width=1)), row=1, col=1)
 
-            # EMA
             colors_ema = {"20": "#9B59B6", "50": "#8E44AD"}
             for per in show_ema:
                 if f'EMA_{per}' in df_ind.columns:
                     fig.add_trace(go.Scatter(x=df_ind.index, y=df_ind[f'EMA_{per}'], mode='lines', 
                                             name=f'EMA {per}', line=dict(color=colors_ema.get(per, "white"), width=1, dash='dot')), row=1, col=1)
 
-            # Bollinger Bands
             if show_bb:
                 fig.add_trace(go.Scatter(x=df_ind.index, y=df_ind['BB_Upper'], mode='lines', name='BB Upper',
                                         line=dict(color='rgba(255, 255, 255, 0.3)', width=1), showlegend=False), row=1, col=1)
@@ -1233,7 +1003,6 @@ else:
 
             current_row = 2
             
-            # RSI
             if "RSI" in show_osc:
                 fig.add_trace(go.Scatter(x=df_ind.index, y=df_ind['RSI'], mode='lines', name='RSI', line=dict(color='#E74C3C')), row=current_row, col=1)
                 fig.add_hline(y=70, line_dash="dash", line_color="gray", row=current_row, col=1)
@@ -1241,7 +1010,6 @@ else:
                 fig.update_yaxes(title_text="RSI", row=current_row, col=1)
                 current_row += 1
 
-            # MACD
             if "MACD" in show_osc:
                 fig.add_trace(go.Scatter(x=df_ind.index, y=df_ind['MACD'], mode='lines', name='MACD', line=dict(color='#3498DB')), row=current_row, col=1)
                 fig.add_trace(go.Scatter(x=df_ind.index, y=df_ind['Signal_Line'], mode='lines', name='Signal', line=dict(color='#E67E22')), row=current_row, col=1)
@@ -1252,15 +1020,11 @@ else:
                             title=f"Análisis Técnico - {ticker_final} ({periodo_velas_sel})")
             st.plotly_chart(fig, use_container_width=True)
             
-            # Botón de descarga para datos históricos
             csv_hist = df_ind.to_csv().encode('utf-8')
             st.download_button("⬇️ Descargar Datos Históricos", csv_hist, f"historico_{ticker_final}.csv", "text/csv", key='dl_hist')
 
         st.markdown("---")
 
-        # ==============================
-        # COMPARACIÓN CONTRA ÍNDICE (BASE 0)
-        # ==============================
         st.subheader("📈 Rendimiento Comparativo vs Índice")
 
         try:
@@ -1273,7 +1037,6 @@ else:
 
             precios_ticker, precios_indice = precios_ticker.align(precios_indice, join="inner")
 
-            # Rendimientos en base 0
             rendimiento_ticker = ((precios_ticker / precios_ticker.iloc[0]) - 1) * 100
             rendimiento_indice = ((precios_indice / precios_indice.iloc[0]) - 1) * 100
 
@@ -1288,7 +1051,6 @@ else:
                 mode="lines", name=indice_select, line=dict(color="#E67E22", width=3, dash="dot")
             ))
 
-            # Línea en y=0
             fig_comp.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5)
 
             fig_comp.update_layout(
@@ -1306,17 +1068,12 @@ else:
 
         st.markdown("---")
 
-
-        # ==============================
-        # COMPARACIÓN CON PEERS (GRÁFICO BASE 0)
-        # ==============================
         if peers:
             st.subheader("📊 Rendimiento vs Competidores (Último Año)")
 
             try:
                 fig_peers = go.Figure()
                 
-                # Agregar el ticker principal
                 datos_main = descargar_datos_historicos(ticker_final, period="1y", interval="1d")
                 precios_main = extraer_precios_columna(datos_main)
                 rendimiento_main = ((precios_main / precios_main.iloc[0]) - 1) * 100
@@ -1329,7 +1086,6 @@ else:
                     line=dict(color="#1E8BC3", width=4)
                 ))
 
-                # Agregar peers (máximo 5)
                 colores_peers = ["#E67E22", "#26A65B", "#8E44AD", "#C0392B", "#F39C12"]
                 for i, peer in enumerate(peers[:5]):
                     try:
@@ -1349,7 +1105,6 @@ else:
                     except:
                         continue
 
-                # Línea en y=0
                 fig_peers.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5)
 
                 fig_peers.update_layout(
@@ -1369,13 +1124,8 @@ else:
 
             st.markdown("---")
 
-
-        # ==============================
-        # MÉTRICAS DE RENDIMIENTO Y RIESGO - VISUAL
-        # ==============================
         st.subheader("📊 Métricas de Rendimiento y Riesgo")
         
-        # Selector de periodo
         periodo_opciones = {
             "1 Mes": 21,
             "3 Meses": 63,
@@ -1396,11 +1146,9 @@ else:
         periodo_dias = periodo_opciones[periodo_sel]
         indice_t = indices_dict[indice_select]
         
-        # Calcular métricas
         metricas = calcular_metricas_periodo(ticker_final, indice_t, periodo_dias, tasa_libre_riesgo)
         
         if metricas:
-            # CSS para bubbles
             st.markdown("""
                 <style>
                 .metric-bubble {
@@ -1431,7 +1179,6 @@ else:
                 </style>
             """, unsafe_allow_html=True)
             
-            # Mostrar métricas en cards visuales
             col1, col2, col3, col4, col5 = st.columns(5)
             
             col1.markdown(f"""
@@ -1475,11 +1222,7 @@ else:
 
         st.markdown("---")
 
-
-        # ==============================
-        # ESTADOS FINANCIEROS
-        # ==============================
-        st.subheader("� Estados Financieros")
+        st.subheader("📋 Estados Financieros")
         
         tab1, tab2, tab3 = st.tabs(["Income Statement", "Balance Sheet", "Cash Flow"])
         
@@ -1515,10 +1258,6 @@ else:
 
         st.markdown("---")
 
-
-        # ==============================
-        # NOTICIAS Y SENTIMIENTO
-        # ==============================
         st.subheader("📰 Noticias y Sentimiento de Mercado")
         
         noticias = obtener_noticias_yf(ticker_final)
@@ -1532,7 +1271,6 @@ else:
                     titulo = n.get('title', 'Sin título')
                     link = n.get('link', '#')
                     publisher = n.get('publisher', 'Desconocido')
-                    # Manejar diferentes formatos de tiempo si es necesario
                     st.markdown(f"- [{titulo}]({link}) <span style='color:gray; font-size:12px'>({publisher})</span>", unsafe_allow_html=True)
             
             with col_sentiment:
@@ -1556,11 +1294,11 @@ else:
                             </div>
                         """, unsafe_allow_html=True)
                     else:
-                        error_msg = st.session_state.get('ai_error', 'Error desconocido')
+                        error_msg = st.session_state.get('ai_error', '')
                         
-                        if error_msg and ('cuota' in error_msg.lower() or 'quota' in error_msg.lower() or 'exhausted' in error_msg.lower()):
+                        if 'cuota' in error_msg.lower() or 'quota' in error_msg.lower():
                             st.info("🤖 Límite de cuota alcanzado. Intenta más tarde.")
-                        elif error_msg and 'api_key' in error_msg.lower():
+                        elif 'api_key' in error_msg.lower():
                             st.warning("🤖 Error de configuración de API Key.")
                         else:
                             st.info("🤖 No se pudo generar el análisis de sentimiento.")
@@ -1571,10 +1309,6 @@ else:
 
         st.markdown("---")
 
-
-        # ==============================
-        # ANÁLISIS INDIVIDUAL CON GEMINI
-        # ==============================
         if GEMINI_DISPONIBLE:
             st.subheader(f"🧠 Análisis Individual con Gemini AI ({idioma})")
 
@@ -1620,25 +1354,17 @@ Da la respuesta en formato plano, sin asteriscos ni formato markdown. Supón que
                     unsafe_allow_html=True
                 )
             else:
-                # Mostrar el error específico si está disponible
-                error_msg = st.session_state.get('ai_error', 'Error desconocido')
+                error_msg = st.session_state.get('ai_error', '')
                 
-                if 'cuota' in error_msg.lower() or 'quota' in error_msg.lower() or 'exhausted' in error_msg.lower():
-                    st.info("🤖 **Análisis de IA no disponible:** El límite de requests de Gemini se ha alcanzado. Por favor, intenta más tarde.")
+                if 'cuota' in error_msg.lower() or 'quota' in error_msg.lower():
+                    st.info("🤖 Límite de requests alcanzado. Intenta más tarde.")
                 elif 'api_key' in error_msg.lower():
-                    st.error("🤖 **Error de configuración:** La API Key de Gemini no es válida. Por favor contacta al administrador.")
-                elif 'bloqueado' in error_msg.lower():
-                    st.warning(f"🤖 **Contenido bloqueado:** {error_msg}")
+                    st.error("🤖 Error de configuración de API Key.")
                 else:
-                    st.error(f"🤖 **Error al generar análisis:** {error_msg}")
-                    st.caption("Si el problema persiste, por favor contacta al administrador.")
+                    st.error(f"🤖 Error: {error_msg}")
 
             st.markdown("---")
 
-
-            # ==============================
-            # ANÁLISIS COMPARATIVO CON PEERS
-            # ==============================
             if peers:
                 st.subheader(f"🔬 Análisis Comparativo con Competidores ({idioma})")
                 
@@ -1687,7 +1413,7 @@ Genera un análisis comparativo en máximo 300 palabras EN {idioma.upper()} que 
 4. Valoración relativa (sobrevalorada/infravalorada vs peers)
 5. Recomendación comparativa
 
-Da la respuesta en formato plano, sin asteriscos ni formato markdown. Hasta el final recomienda de los peers y el ticker analizado, en que orden invertirías, enuméralos. Pon en mayúsculas la recomendación de comprar o vender. QUE SEA MUY CLARO. 
+Da la respuesta en formato plano, sin asteriscos ni formato markdown. Hasta el final recomienda de los peers y el ticker analizado, en que orden invertirías, enuméralos. Pon en mayúsculas la recomendación de comprar o vender. QUE SEA MUY CLARO.
 """
 
                 with st.spinner("Generando análisis comparativo con peers..."):
@@ -1705,31 +1431,24 @@ Da la respuesta en formato plano, sin asteriscos ni formato markdown. Hasta el f
                         unsafe_allow_html=True
                     )
                 else:
-                    # Mostrar el error específico si está disponible
-                    error_msg = st.session_state.get('ai_error', 'Error desconocido')
+                    error_msg = st.session_state.get('ai_error', '')
                     
-                    if 'cuota' in error_msg.lower() or 'quota' in error_msg.lower() or 'exhausted' in error_msg.lower():
-                        st.info("🤖 **Análisis comparativo de IA no disponible:** El límite de requests de Gemini se ha alcanzado. Por favor, intenta más tarde.")
+                    if 'cuota' in error_msg.lower() or 'quota' in error_msg.lower():
+                        st.info("🤖 Límite de requests alcanzado. Intenta más tarde.")
                     elif 'api_key' in error_msg.lower():
-                        st.error("🤖 **Error de configuración:** La API Key de Gemini no es válida. Por favor contacta al administrador.")
-                    elif 'bloqueado' in error_msg.lower():
-                        st.warning(f"🤖 **Contenido bloqueado:** {error_msg}")
+                        st.error("🤖 Error de configuración de API Key.")
                     else:
-                        st.error(f"🤖 **Error al generar análisis comparativo:** {error_msg}")
-                        st.caption("Si el problema persiste, por favor contacta al administrador.")
+                        st.error(f"🤖 Error: {error_msg}")
 
         else:
-            st.info("🤖 **Análisis de IA no disponible:** El servicio de Gemini AI está temporalmente deshabilitado debido al límite de requests. Todos los gráficos, métricas y datos financieros están disponibles y funcionando correctamente.")
+            st.info("🤖 Análisis de IA no disponible actualmente.")
 
         st.markdown("---")
         st.warning("⚠️ Esto no es recomendación financiera. Solo fines educativos.")
 
-        # ==============================
-        # FOOTER
-        # ==============================
         st.markdown("""
         <div style='text-align:center; color:gray; font-size:11px; margin-top: 40px;'>
-        📊 <b>Fuentes:</b> Yahoo Finance, Finviz & Banxico | 🤖 <b>IA:</b> Gemini 2.5 Flash<br>
-        🎓 Ingeniería Financiera | 💻 Versión 4.3 | ⚖️ Solo para uso educativo
+        📊 <b>Fuentes:</b> Yahoo Finance, Finviz & Banxico | 🤖 <b>IA:</b> Gemini 2.0 Flash<br>
+        🎓 Ingeniería Financiera | 💻 Versión 4.4 | ⚖️ Solo para uso educativo
         </div>
         """, unsafe_allow_html=True)
