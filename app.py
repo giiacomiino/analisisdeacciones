@@ -39,15 +39,14 @@ def obtener_tasa_libre_riesgo():
         response.raise_for_status()
         soup = BeautifulSoup(response.text, "html.parser")
         
-        # Buscar el div de CETES 28
         cetes_div = soup.find("div", {"id": "dv_singleCetes28"})
         if cetes_div:
             valor_span = cetes_div.find("span", class_="valor")
             if valor_span:
                 tasa = float(valor_span.get_text(strip=True))
-                return tasa / 100  # Convertir a decimal
+                return tasa / 100
         
-        return 0.07  # Default 7% si no se puede obtener
+        return 0.07
     except:
         return 0.07
 
@@ -150,16 +149,7 @@ def obtener_income_yahoo(ticker):
             return pd.DataFrame()
         df = df.loc[df.index.intersection(claves)].reindex(claves).fillna(0).astype(float).T
         df.index = [i.strftime("%Y-%m-%d") for i in df.index]
-        data = []
-        for m in df.columns:
-            vals = [
-                f"{v/1e9:,.1f} B" if abs(v) >= 1e9 else
-                f"{v/1e6:,.0f} M" if abs(v) >= 1e6 else
-                f"{v:,.0f}"
-                for v in df[m]
-            ]
-            data.append([m] + vals)
-        return pd.DataFrame(data, columns=["Métrica"] + list(df.index))
+        return df
     except:
         return pd.DataFrame()
 
@@ -228,21 +218,21 @@ def extraer_precios_columna(datos):
 def calcular_metricas_periodo(ticker, indice_ticker, periodo_dias, tasa_libre_riesgo):
     """Calcula métricas de rendimiento y riesgo para un periodo específico."""
     try:
-        # Descargar datos
         datos_ticker = yf.download(ticker, period="5y", interval="1d", progress=False)
         datos_indice = yf.download(indice_ticker, period="5y", interval="1d", progress=False)
 
         precios_ticker = extraer_precios_columna(datos_ticker).dropna()
         precios_indice = extraer_precios_columna(datos_indice).dropna()
 
-        # Alinear datos
         precios_ticker, precios_indice = precios_ticker.align(precios_indice, join="inner")
         
-        # Filtrar por periodo
         if periodo_dias == "YTD":
             inicio = datetime(datetime.now().year, 1, 1)
             pp = precios_ticker[precios_ticker.index >= inicio]
             pi = precios_indice[precios_indice.index >= inicio]
+        elif periodo_dias == "max":
+            pp = precios_ticker
+            pi = precios_indice
         else:
             pp = precios_ticker.tail(periodo_dias)
             pi = precios_indice.tail(periodo_dias)
@@ -250,18 +240,15 @@ def calcular_metricas_periodo(ticker, indice_ticker, periodo_dias, tasa_libre_ri
         if len(pp) < 10:
             return None
 
-        # Calcular retornos
         rp = pp.pct_change().dropna()
         ri = pi.pct_change().dropna()
 
-        # Métricas
         rendimiento = ((pp.iloc[-1] / pp.iloc[0]) - 1) * 100
         volatilidad = rp.std() * np.sqrt(252) * 100
         beta = np.cov(rp, ri)[0, 1] / np.var(ri) if np.var(ri) != 0 else 0
         rend_ind = ((pi.iloc[-1] / pi.iloc[0]) - 1) * 100
         alpha = rendimiento - (beta * rend_ind)
         
-        # Sharpe Ratio con tasa libre de riesgo
         rendimiento_anual = rp.mean() * 252
         sharpe = (rendimiento_anual - tasa_libre_riesgo) / (rp.std() * np.sqrt(252)) if rp.std() != 0 else 0
 
@@ -297,7 +284,6 @@ def generar_analisis_ai(prompt):
 st.title("📊 Análisis Integral de Acciones")
 st.caption("Análisis profesional con Yahoo Finance, Finviz y Gemini AI")
 
-# Mostrar advertencia si Gemini no está disponible
 if not GEMINI_DISPONIBLE:
     st.warning("⚠️ **Funcionalidad limitada:** El servicio de IA (Gemini) no está disponible actualmente debido a límite de requests. La app funcionará con todas las métricas y gráficos, pero sin análisis de IA ni traducciones.")
 
@@ -308,7 +294,6 @@ st.markdown("---")
 # -----------------------------
 
 if st.session_state["ticker"] is None:
-    # MODO BÚSQUEDA
     st.subheader("🔎 Buscar Empresa / Ticker")
 
     busqueda = st.text_input(
@@ -353,10 +338,8 @@ if st.session_state["ticker"] is None:
                     st.rerun()
 
 else:
-    # MODO ANÁLISIS
     ticker_final = st.session_state["ticker"]
     
-    # Configuración solo muestra idioma si Gemini está disponible
     if GEMINI_DISPONIBLE:
         col_ticker, col_indice, col_idioma, col_reset = st.columns([3, 2, 2, 1])
     else:
@@ -394,19 +377,13 @@ else:
 
     st.markdown("---")
 
-    # BOTÓN ANALIZAR
     if not st.session_state.get("analizar", False):
         if st.button("🚀 Analizar", type="primary", use_container_width=True):
             st.session_state["analizar"] = True
             st.rerun()
 
-    # ======================================================
-    # ANÁLISIS COMPLETO
-    # ======================================================
-
     if st.session_state.get("analizar", False):
         
-        # Obtener tasa libre de riesgo
         tasa_libre_riesgo = obtener_tasa_libre_riesgo()
         
         try:
@@ -427,7 +404,7 @@ else:
         financial_insights = obtener_financial_insights_yf(ticker_final)
 
         if financial_insights:
-            st.subheader("✨ Financial Insights")
+            st.markdown('<div class="section-header">✨ Insights Financieros Clave</div>', unsafe_allow_html=True)
             st.markdown(
                 f"""
                 <div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
@@ -445,7 +422,7 @@ else:
 
 
         # ==============================
-        # INFORMACIÓN GENERAL - DISEÑO MEJORADO
+        # INFORMACIÓN GENERAL
         # ==============================
         st.markdown("""
             <style>
@@ -484,7 +461,7 @@ else:
             </style>
         """, unsafe_allow_html=True)
 
-        st.markdown('<div class="section-header">🏢 Información General</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-header">🏢 Perfil Corporativo</div>', unsafe_allow_html=True)
         
         col1, col2, col3, col4 = st.columns(4)
         
@@ -521,7 +498,6 @@ else:
                 </div>
             """, unsafe_allow_html=True)
 
-        # Industria en fila separada
         st.markdown(f"""
             <div class="info-card">
                 <div class="info-label">🔧 Industria</div>
@@ -544,9 +520,9 @@ else:
 
 
         # ==============================
-        # KPIs - MÉTRICAS BURSÁTILES
+        # KPIs - MÉTRICAS BURSÁTILES (AMPLIADAS)
         # ==============================
-        st.markdown('<div class="section-header">📈 Métricas Bursátiles</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-header">📈 Radiografía Bursátil</div>', unsafe_allow_html=True)
         
         st.markdown("""
             <style>
@@ -560,11 +536,16 @@ else:
                 margin-bottom: 10px;
                 transition: all 0.3s ease;
                 border: 2px solid transparent;
+                position: relative;
             }
             .kpi-card:hover {
                 transform: translateY(-8px);
                 border: 2px solid #71B280;
                 box-shadow: 0 10px 30px rgba(113, 178, 128, 0.4);
+            }
+            .kpi-card:hover .tooltip {
+                visibility: visible;
+                opacity: 1;
             }
             .kpi-label {
                 font-size: 13px;
@@ -578,15 +559,44 @@ else:
                 font-weight: bold;
                 color: white;
             }
+            .tooltip {
+                visibility: hidden;
+                width: 220px;
+                background-color: #333;
+                color: #fff;
+                text-align: center;
+                border-radius: 6px;
+                padding: 10px;
+                position: absolute;
+                z-index: 1;
+                bottom: 125%;
+                left: 50%;
+                margin-left: -110px;
+                opacity: 0;
+                transition: opacity 0.3s;
+                font-size: 11px;
+                line-height: 1.4;
+            }
+            .tooltip::after {
+                content: "";
+                position: absolute;
+                top: 100%;
+                left: 50%;
+                margin-left: -5px;
+                border-width: 5px;
+                border-style: solid;
+                border-color: #333 transparent transparent transparent;
+            }
             </style>
         """, unsafe_allow_html=True)
         
-        col1, col2, col3, col4, col5 = st.columns(5)
+        col1, col2, col3, col4, col5, col6 = st.columns(6)
         
         with col1:
             market_cap = f"${info.get('marketCap', 0)/1e9:,.1f}B" if info.get('marketCap') else "N/A"
             st.markdown(f"""
                 <div class="kpi-card">
+                    <div class="tooltip">Capitalización de mercado: valor total de todas las acciones en circulación</div>
                     <div class="kpi-label">💰 Market Cap</div>
                     <div class="kpi-value">{market_cap}</div>
                 </div>
@@ -596,6 +606,7 @@ else:
             pe = f"{info.get('trailingPE', 0):.2f}" if info.get('trailingPE') else "N/A"
             st.markdown(f"""
                 <div class="kpi-card">
+                    <div class="tooltip">Price/Earnings: relación precio-ganancia. Indica cuánto paga el mercado por cada dólar de ganancia</div>
                     <div class="kpi-label">📊 P/E Ratio</div>
                     <div class="kpi-value">{pe}</div>
                 </div>
@@ -605,6 +616,7 @@ else:
             eps = f"${info.get('trailingEps', 0):.2f}" if info.get('trailingEps') else "N/A"
             st.markdown(f"""
                 <div class="kpi-card">
+                    <div class="tooltip">Earnings Per Share: ganancia neta dividida entre el número de acciones en circulación</div>
                     <div class="kpi-label">💵 EPS</div>
                     <div class="kpi-value">{eps}</div>
                 </div>
@@ -614,6 +626,7 @@ else:
             beta = f"{info.get('beta', 0):.2f}" if info.get('beta') else "N/A"
             st.markdown(f"""
                 <div class="kpi-card">
+                    <div class="tooltip">Beta: mide la volatilidad relativa vs el mercado. >1 más volátil, <1 menos volátil</div>
                     <div class="kpi-label">📉 Beta</div>
                     <div class="kpi-value">{beta}</div>
                 </div>
@@ -623,17 +636,91 @@ else:
             div_yield = f"{info.get('dividendYield', 0)*100:.2f}%" if info.get('dividendYield') else "—"
             st.markdown(f"""
                 <div class="kpi-card">
+                    <div class="tooltip">Dividend Yield: rendimiento anual por dividendos como % del precio de la acción</div>
                     <div class="kpi-label">💸 Div. Yield</div>
                     <div class="kpi-value">{div_yield}</div>
+                </div>
+            """, unsafe_allow_html=True)
+        
+        with col6:
+            pb = f"{info.get('priceToBook', 0):.2f}" if info.get('priceToBook') else "N/A"
+            st.markdown(f"""
+                <div class="kpi-card">
+                    <div class="tooltip">Price/Book: relación entre precio de mercado y valor en libros. Indica si está sobre o infravalorada</div>
+                    <div class="kpi-label">📖 P/B Ratio</div>
+                    <div class="kpi-value">{pb}</div>
+                </div>
+            """, unsafe_allow_html=True)
+
+        # Segunda fila de métricas bursátiles
+        col1, col2, col3, col4, col5, col6 = st.columns(6)
+        
+        with col1:
+            peg = f"{info.get('pegRatio', 0):.2f}" if info.get('pegRatio') else "N/A"
+            st.markdown(f"""
+                <div class="kpi-card">
+                    <div class="tooltip">PEG Ratio: P/E ajustado por crecimiento. <1 puede indicar infravaloración</div>
+                    <div class="kpi-label">🎯 PEG Ratio</div>
+                    <div class="kpi-value">{peg}</div>
+                </div>
+            """, unsafe_allow_html=True)
+        
+        with col2:
+            ps = f"{info.get('priceToSalesTrailing12Months', 0):.2f}" if info.get('priceToSalesTrailing12Months') else "N/A"
+            st.markdown(f"""
+                <div class="kpi-card">
+                    <div class="tooltip">Price/Sales: capitalización de mercado dividida entre ingresos totales</div>
+                    <div class="kpi-label">💼 P/S Ratio</div>
+                    <div class="kpi-value">{ps}</div>
+                </div>
+            """, unsafe_allow_html=True)
+        
+        with col3:
+            target_mean = f"${info.get('targetMeanPrice', 0):.2f}" if info.get('targetMeanPrice') else "N/A"
+            st.markdown(f"""
+                <div class="kpi-card">
+                    <div class="tooltip">Target Price: precio objetivo promedio según analistas</div>
+                    <div class="kpi-label">🎯 Target Price</div>
+                    <div class="kpi-value">{target_mean}</div>
+                </div>
+            """, unsafe_allow_html=True)
+        
+        with col4:
+            current_price = f"${info.get('currentPrice', 0):.2f}" if info.get('currentPrice') else "N/A"
+            st.markdown(f"""
+                <div class="kpi-card">
+                    <div class="tooltip">Current Price: precio actual de la acción en el mercado</div>
+                    <div class="kpi-label">💲 Precio Actual</div>
+                    <div class="kpi-value">{current_price}</div>
+                </div>
+            """, unsafe_allow_html=True)
+        
+        with col5:
+            week_high = f"${info.get('fiftyTwoWeekHigh', 0):.2f}" if info.get('fiftyTwoWeekHigh') else "N/A"
+            st.markdown(f"""
+                <div class="kpi-card">
+                    <div class="tooltip">52-Week High: precio máximo alcanzado en los últimos 52 semanas</div>
+                    <div class="kpi-label">📈 52w High</div>
+                    <div class="kpi-value">{week_high}</div>
+                </div>
+            """, unsafe_allow_html=True)
+        
+        with col6:
+            week_low = f"${info.get('fiftyTwoWeekLow', 0):.2f}" if info.get('fiftyTwoWeekLow') else "N/A"
+            st.markdown(f"""
+                <div class="kpi-card">
+                    <div class="tooltip">52-Week Low: precio mínimo alcanzado en los últimos 52 semanas</div>
+                    <div class="kpi-label">📉 52w Low</div>
+                    <div class="kpi-value">{week_low}</div>
                 </div>
             """, unsafe_allow_html=True)
 
         st.markdown("<br>", unsafe_allow_html=True)
 
         # ==============================
-        # KPIs - MÉTRICAS CORPORATIVAS
+        # KPIs - MÉTRICAS CORPORATIVAS (AMPLIADAS)
         # ==============================
-        st.markdown('<div class="section-header">🏦 Métricas Corporativas</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-header">🏦 Análisis de Rentabilidad</div>', unsafe_allow_html=True)
         
         st.markdown("""
             <style>
@@ -647,11 +734,16 @@ else:
                 margin-bottom: 10px;
                 transition: all 0.3s ease;
                 border: 2px solid transparent;
+                position: relative;
             }
             .corp-card:hover {
                 transform: translateY(-8px);
                 border: 2px solid #764ba2;
                 box-shadow: 0 10px 30px rgba(118, 75, 162, 0.4);
+            }
+            .corp-card:hover .tooltip {
+                visibility: visible;
+                opacity: 1;
             }
             .corp-label {
                 font-size: 13px;
@@ -668,50 +760,128 @@ else:
             </style>
         """, unsafe_allow_html=True)
 
-        col1, col2, col3, col4, col5 = st.columns(5)
+        col1, col2, col3, col4, col5, col6 = st.columns(6)
         
         with col1:
             roe = f"{info.get('returnOnEquity', 0)*100:.1f}%" if info.get('returnOnEquity') else "N/A"
             st.markdown(f"""
                 <div class="corp-card">
+                    <div class="tooltip">Return on Equity: rentabilidad sobre el capital. Mide eficiencia en generar ganancias con el capital de accionistas</div>
                     <div class="corp-label">📈 ROE</div>
                     <div class="corp-value">{roe}</div>
                 </div>
             """, unsafe_allow_html=True)
         
         with col2:
+            roa = f"{info.get('returnOnAssets', 0)*100:.1f}%" if info.get('returnOnAssets') else "N/A"
+            st.markdown(f"""
+                <div class="corp-card">
+                    <div class="tooltip">Return on Assets: rentabilidad sobre activos totales. Mide eficiencia en uso de activos</div>
+                    <div class="corp-label">💼 ROA</div>
+                    <div class="corp-value">{roa}</div>
+                </div>
+            """, unsafe_allow_html=True)
+        
+        with col3:
             gross_margin = f"{info.get('grossMargins', 0)*100:.1f}%" if info.get('grossMargins') else "N/A"
             st.markdown(f"""
                 <div class="corp-card">
+                    <div class="tooltip">Gross Margin: margen bruto. (Ingresos - Costo de ventas) / Ingresos. Mayor = mejor poder de fijación de precios</div>
                     <div class="corp-label">📊 Gross Margin</div>
                     <div class="corp-value">{gross_margin}</div>
                 </div>
             """, unsafe_allow_html=True)
         
-        with col3:
+        with col4:
             profit_margin = f"{info.get('profitMargins', 0)*100:.1f}%" if info.get('profitMargins') else "N/A"
             st.markdown(f"""
                 <div class="corp-card">
+                    <div class="tooltip">Profit Margin: margen neto. Ganancia neta / Ingresos. Indica cuánto queda después de todos los gastos</div>
                     <div class="corp-label">💹 Profit Margin</div>
                     <div class="corp-value">{profit_margin}</div>
                 </div>
             """, unsafe_allow_html=True)
         
-        with col4:
+        with col5:
+            operating_margin = f"{info.get('operatingMargins', 0)*100:.1f}%" if info.get('operatingMargins') else "N/A"
+            st.markdown(f"""
+                <div class="corp-card">
+                    <div class="tooltip">Operating Margin: margen operativo. Ganancia operativa / Ingresos. Eficiencia operativa antes de intereses e impuestos</div>
+                    <div class="corp-label">⚙️ Operating Margin</div>
+                    <div class="corp-value">{operating_margin}</div>
+                </div>
+            """, unsafe_allow_html=True)
+        
+        with col6:
+            ebitda_margin = f"{info.get('ebitdaMargins', 0)*100:.1f}%" if info.get('ebitdaMargins') else "N/A"
+            st.markdown(f"""
+                <div class="corp-card">
+                    <div class="tooltip">EBITDA Margin: EBITDA / Ingresos. Rentabilidad operativa antes de depreciación y amortización</div>
+                    <div class="corp-label">📊 EBITDA Margin</div>
+                    <div class="corp-value">{ebitda_margin}</div>
+                </div>
+            """, unsafe_allow_html=True)
+
+        # Segunda fila de métricas corporativas
+        col1, col2, col3, col4, col5, col6 = st.columns(6)
+        
+        with col1:
             revenue = f"${info.get('totalRevenue', 0)/1e9:,.1f}B" if info.get('totalRevenue') else "N/A"
             st.markdown(f"""
                 <div class="corp-card">
+                    <div class="tooltip">Revenue TTM: ingresos totales de los últimos 12 meses</div>
                     <div class="corp-label">💰 Revenue TTM</div>
                     <div class="corp-value">{revenue}</div>
                 </div>
             """, unsafe_allow_html=True)
         
-        with col5:
+        with col2:
             net_income = f"${info.get('netIncomeToCommon', 0)/1e9:,.1f}B" if info.get('netIncomeToCommon') else "N/A"
             st.markdown(f"""
                 <div class="corp-card">
+                    <div class="tooltip">Net Income: ganancia neta después de todos los gastos e impuestos</div>
                     <div class="corp-label">💵 Net Income</div>
                     <div class="corp-value">{net_income}</div>
+                </div>
+            """, unsafe_allow_html=True)
+        
+        with col3:
+            ebitda = f"${info.get('ebitda', 0)/1e9:,.1f}B" if info.get('ebitda') else "N/A"
+            st.markdown(f"""
+                <div class="corp-card">
+                    <div class="tooltip">EBITDA: Earnings Before Interest, Taxes, Depreciation & Amortization. Mide rentabilidad operativa</div>
+                    <div class="corp-label">📈 EBITDA</div>
+                    <div class="corp-value">{ebitda}</div>
+                </div>
+            """, unsafe_allow_html=True)
+        
+        with col4:
+            debt_equity = f"{info.get('debtToEquity', 0)/100:.2f}" if info.get('debtToEquity') else "N/A"
+            st.markdown(f"""
+                <div class="corp-card">
+                    <div class="tooltip">Debt/Equity: apalancamiento financiero. Deuda total / Capital. >2 puede indicar alto riesgo</div>
+                    <div class="corp-label">⚖️ Debt/Equity</div>
+                    <div class="corp-value">{debt_equity}</div>
+                </div>
+            """, unsafe_allow_html=True)
+        
+        with col5:
+            current_ratio = f"{info.get('currentRatio', 0):.2f}" if info.get('currentRatio') else "N/A"
+            st.markdown(f"""
+                <div class="corp-card">
+                    <div class="tooltip">Current Ratio: liquidez. Activos corrientes / Pasivos corrientes. >1 indica buena liquidez</div>
+                    <div class="corp-label">💧 Current Ratio</div>
+                    <div class="corp-value">{current_ratio}</div>
+                </div>
+            """, unsafe_allow_html=True)
+        
+        with col6:
+            quick_ratio = f"{info.get('quickRatio', 0):.2f}" if info.get('quickRatio') else "N/A"
+            st.markdown(f"""
+                <div class="corp-card">
+                    <div class="tooltip">Quick Ratio: prueba ácida. (Activos corrientes - Inventarios) / Pasivos corrientes. Liquidez inmediata</div>
+                    <div class="corp-label">⚡ Quick Ratio</div>
+                    <div class="corp-value">{quick_ratio}</div>
                 </div>
             """, unsafe_allow_html=True)
 
@@ -721,7 +891,7 @@ else:
         # ==============================
         # COMPARACIÓN CON PEERS
         # ==============================
-        st.subheader("🔍 Comparación con Competidores")
+        st.markdown('<div class="section-header">🔍 Comparativa Competitiva</div>', unsafe_allow_html=True)
         peers = obtener_peers_finviz(ticker_final)
 
         if peers:
@@ -739,8 +909,26 @@ else:
         # ==============================
         # GRÁFICO DE VELAS
         # ==============================
-        st.subheader("📊 Gráfico de Velas")
-        datos = yf.download(ticker_final, period="1y", interval="1d", progress=False)
+        st.markdown('<div class="section-header">📊 Evolución del Precio</div>', unsafe_allow_html=True)
+        
+        periodo_velas = st.selectbox(
+            "Selecciona el periodo:",
+            ["3 meses", "6 meses", "YTD", "1 año", "3 años", "5 años", "max"],
+            index=3,
+            key="periodo_velas"
+        )
+        
+        periodo_map = {
+            "3 meses": "3mo",
+            "6 meses": "6mo",
+            "YTD": "ytd",
+            "1 año": "1y",
+            "3 años": "3y",
+            "5 años": "5y",
+            "max": "max"
+        }
+        
+        datos = yf.download(ticker_final, period=periodo_map[periodo_velas], interval="1d", progress=False)
 
         if not datos.empty:
             if isinstance(datos.columns, pd.MultiIndex):
@@ -765,7 +953,7 @@ else:
             ))
 
             fig.update_layout(template="plotly_dark", height=600, xaxis_rangeslider_visible=False,
-                              title=f"Precio Histórico - {ticker_final}")
+                              title=f"Precio Histórico - {ticker_final} ({periodo_velas})")
             st.plotly_chart(fig, use_container_width=True)
 
         st.markdown("---")
@@ -774,19 +962,25 @@ else:
         # ==============================
         # COMPARACIÓN CONTRA ÍNDICE (BASE 0)
         # ==============================
-        st.subheader("📈 Rendimiento Comparativo vs Índice")
+        st.markdown('<div class="section-header">📈 Performance vs Índice de Referencia</div>', unsafe_allow_html=True)
+        
+        periodo_comp_indice = st.selectbox(
+            "Selecciona el periodo:",
+            ["3 meses", "6 meses", "YTD", "1 año", "3 años", "5 años", "max"],
+            index=3,
+            key="periodo_comp_indice"
+        )
 
         try:
-            datos_ticker = yf.download(ticker_final, period="1y", interval="1d", progress=False)
+            datos_ticker = yf.download(ticker_final, period=periodo_map[periodo_comp_indice], interval="1d", progress=False)
             indice_t = indices_dict[indice_select]
-            datos_indice = yf.download(indice_t, period="1y", interval="1d", progress=False)
+            datos_indice = yf.download(indice_t, period=periodo_map[periodo_comp_indice], interval="1d", progress=False)
 
             precios_ticker = extraer_precios_columna(datos_ticker)
             precios_indice = extraer_precios_columna(datos_indice)
 
             precios_ticker, precios_indice = precios_ticker.align(precios_indice, join="inner")
 
-            # Rendimientos en base 0
             rendimiento_ticker = ((precios_ticker / precios_ticker.iloc[0]) - 1) * 100
             rendimiento_indice = ((precios_indice / precios_indice.iloc[0]) - 1) * 100
 
@@ -801,11 +995,10 @@ else:
                 mode="lines", name=indice_select, line=dict(color="#E67E22", width=3, dash="dot")
             ))
 
-            # Línea en y=0
             fig_comp.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5)
 
             fig_comp.update_layout(
-                title=f"{ticker_final} vs {indice_select} (Base 0)", 
+                title=f"{ticker_final} vs {indice_select} (Base 0) - {periodo_comp_indice}", 
                 template="plotly_white", 
                 height=500,
                 yaxis_title="Rendimiento (%)",
@@ -824,13 +1017,19 @@ else:
         # COMPARACIÓN CON PEERS (GRÁFICO BASE 0)
         # ==============================
         if peers:
-            st.subheader("📊 Rendimiento vs Competidores (Último Año)")
+            st.markdown('<div class="section-header">📊 Battle Royale: Performance vs Competidores</div>', unsafe_allow_html=True)
+            
+            periodo_peers = st.selectbox(
+                "Selecciona el periodo:",
+                ["3 meses", "6 meses", "YTD", "1 año", "3 años", "5 años", "max"],
+                index=3,
+                key="periodo_peers"
+            )
 
             try:
                 fig_peers = go.Figure()
                 
-                # Agregar el ticker principal
-                datos_main = yf.download(ticker_final, period="1y", interval="1d", progress=False)
+                datos_main = yf.download(ticker_final, period=periodo_map[periodo_peers], interval="1d", progress=False)
                 precios_main = extraer_precios_columna(datos_main)
                 rendimiento_main = ((precios_main / precios_main.iloc[0]) - 1) * 100
                 
@@ -842,11 +1041,10 @@ else:
                     line=dict(color="#1E8BC3", width=4)
                 ))
 
-                # Agregar peers (máximo 5)
                 colores_peers = ["#E67E22", "#26A65B", "#8E44AD", "#C0392B", "#F39C12"]
                 for i, peer in enumerate(peers[:5]):
                     try:
-                        datos_peer = yf.download(peer, period="1y", interval="1d", progress=False)
+                        datos_peer = yf.download(peer, period=periodo_map[periodo_peers], interval="1d", progress=False)
                         precios_peer = extraer_precios_columna(datos_peer)
                         
                         if not precios_peer.empty:
@@ -862,11 +1060,10 @@ else:
                     except:
                         continue
 
-                # Línea en y=0
                 fig_peers.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5)
 
                 fig_peers.update_layout(
-                    title=f"Rendimiento Comparativo: {ticker_final} vs Peers (Base 0)",
+                    title=f"Rendimiento Comparativo: {ticker_final} vs Peers (Base 0) - {periodo_peers}",
                     template="plotly_white",
                     height=550,
                     yaxis_title="Rendimiento (%)",
@@ -886,9 +1083,8 @@ else:
         # ==============================
         # MÉTRICAS DE RENDIMIENTO Y RIESGO - VISUAL
         # ==============================
-        st.subheader("📊 Métricas de Rendimiento y Riesgo")
+        st.markdown('<div class="section-header">📊 Métricas de Riesgo y Retorno</div>', unsafe_allow_html=True)
         
-        # Selector de periodo
         periodo_opciones = {
             "1 Mes": 21,
             "3 Meses": 63,
@@ -909,11 +1105,9 @@ else:
         periodo_dias = periodo_opciones[periodo_sel]
         indice_t = indices_dict[indice_select]
         
-        # Calcular métricas
         metricas = calcular_metricas_periodo(ticker_final, indice_t, periodo_dias, tasa_libre_riesgo)
         
         if metricas:
-            # CSS para bubbles
             st.markdown("""
                 <style>
                 .metric-bubble {
@@ -925,9 +1119,14 @@ else:
                     box-shadow: 0 6px 20px rgba(0,0,0,0.4);
                     margin-bottom: 10px;
                     transition: transform 0.3s ease;
+                    position: relative;
                 }
                 .metric-bubble:hover {
                     transform: translateY(-5px);
+                }
+                .metric-bubble:hover .tooltip {
+                    visibility: visible;
+                    opacity: 1;
                 }
                 .metric-title {
                     font-size: 14px;
@@ -944,11 +1143,11 @@ else:
                 </style>
             """, unsafe_allow_html=True)
             
-            # Mostrar métricas en cards visuales
             col1, col2, col3, col4, col5 = st.columns(5)
             
             col1.markdown(f"""
                 <div class="metric-bubble">
+                    <div class="tooltip">Rendimiento total en el periodo seleccionado</div>
                     <div class="metric-title">Rendimiento</div>
                     <div class="metric-value">{metricas['rendimiento']:.2f}%</div>
                 </div>
@@ -956,6 +1155,7 @@ else:
             
             col2.markdown(f"""
                 <div class="metric-bubble">
+                    <div class="tooltip">Volatilidad anualizada: desviación estándar de los retornos</div>
                     <div class="metric-title">Volatilidad</div>
                     <div class="metric-value">{metricas['volatilidad']:.2f}%</div>
                 </div>
@@ -963,6 +1163,7 @@ else:
             
             col3.markdown(f"""
                 <div class="metric-bubble">
+                    <div class="tooltip">Beta: sensibilidad al índice de referencia. >1 más volátil que el mercado</div>
                     <div class="metric-title">Beta</div>
                     <div class="metric-value">{metricas['beta']:.2f}</div>
                 </div>
@@ -970,6 +1171,7 @@ else:
             
             col4.markdown(f"""
                 <div class="metric-bubble">
+                    <div class="tooltip">Alpha: rendimiento en exceso vs el índice ajustado por beta</div>
                     <div class="metric-title">Alpha</div>
                     <div class="metric-value">{metricas['alpha']:.2f}%</div>
                 </div>
@@ -977,6 +1179,7 @@ else:
             
             col5.markdown(f"""
                 <div class="metric-bubble">
+                    <div class="tooltip">Sharpe Ratio: rendimiento ajustado por riesgo. >1 es bueno, >2 muy bueno</div>
                     <div class="metric-title">Sharpe Ratio</div>
                     <div class="metric-value">{metricas['sharpe']:.2f}</div>
                 </div>
@@ -990,13 +1193,96 @@ else:
 
 
         # ==============================
-        # INCOME STATEMENT
+        # INCOME STATEMENT - FORMATO VISUAL
         # ==============================
-        st.subheader("📘 Income Statement")
+        st.markdown('<div class="section-header">📘 Estado de Resultados</div>', unsafe_allow_html=True)
         df_income = obtener_income_yahoo(ticker_final)
 
         if not df_income.empty:
-            st.dataframe(df_income, use_container_width=True, hide_index=True)
+            st.markdown("""
+                <style>
+                .income-card {
+                    background: linear-gradient(135deg, #0F2027 0%, #203A43 50%, #2C5364 100%);
+                    padding: 20px;
+                    border-radius: 12px;
+                    color: white;
+                    box-shadow: 0 6px 20px rgba(0,0,0,0.4);
+                    margin-bottom: 15px;
+                    transition: transform 0.3s ease;
+                }
+                .income-card:hover {
+                    transform: translateY(-3px);
+                }
+                .income-metric {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    padding: 12px 0;
+                    border-bottom: 1px solid rgba(255,255,255,0.1);
+                }
+                .income-metric:last-child {
+                    border-bottom: none;
+                }
+                .income-label {
+                    font-size: 15px;
+                    font-weight: 500;
+                    opacity: 0.9;
+                }
+                .income-value {
+                    font-size: 16px;
+                    font-weight: bold;
+                    text-align: right;
+                }
+                .income-header {
+                    font-size: 18px;
+                    font-weight: bold;
+                    margin-bottom: 15px;
+                    color: #71B280;
+                    text-align: center;
+                }
+                </style>
+            """, unsafe_allow_html=True)
+            
+            # Crear columnas para cada periodo
+            periodos = df_income.index.tolist()
+            num_cols = len(periodos)
+            cols = st.columns(num_cols)
+            
+            metricas = df_income.columns.tolist()
+            
+            for i, periodo in enumerate(periodos):
+                with cols[i]:
+                    card_html = f'<div class="income-card"><div class="income-header">{periodo}</div>'
+                    
+                    for metrica in metricas:
+                        valor = df_income.loc[periodo, metrica]
+                        
+                        # Formatear valor
+                        if abs(valor) >= 1e9:
+                            valor_fmt = f"${valor/1e9:,.2f}B"
+                        elif abs(valor) >= 1e6:
+                            valor_fmt = f"${valor/1e6:,.1f}M"
+                        else:
+                            valor_fmt = f"${valor:,.0f}"
+                        
+                        # Color según el tipo de métrica
+                        if metrica in ["Total Revenue", "Gross Profit", "EBITDA", "Net Income"]:
+                            color = "#26A65B" if valor >= 0 else "#C0392B"
+                        else:
+                            color = "#E67E22"
+                        
+                        card_html += f'''
+                        <div class="income-metric">
+                            <div class="income-label">{metrica}</div>
+                            <div class="income-value" style="color: {color};">{valor_fmt}</div>
+                        </div>
+                        '''
+                    
+                    card_html += '</div>'
+                    st.markdown(card_html, unsafe_allow_html=True)
+        
+        else:
+            st.info("📊 Estado de Resultados no disponible para este ticker")
 
         st.markdown("---")
 
@@ -1005,7 +1291,7 @@ else:
         # ANÁLISIS INDIVIDUAL CON GEMINI
         # ==============================
         if GEMINI_DISPONIBLE:
-            st.subheader(f"🧠 Análisis Individual con Gemini AI ({idioma})")
+            st.markdown(f'<div class="section-header">🧠 Análisis IA Individual ({idioma})</div>', unsafe_allow_html=True)
 
             prompt_individual = f"""
 Eres un analista financiero profesional. Analiza la empresa {ticker_final} ({info.get('longName', 'N/A')}) con los siguientes datos:
@@ -1058,7 +1344,7 @@ Da la respuesta en formato plano, sin asteriscos ni formato markdown.
             # ANÁLISIS COMPARATIVO CON PEERS
             # ==============================
             if peers:
-                st.subheader(f"🔬 Análisis Comparativo con Competidores ({idioma})")
+                st.markdown(f'<div class="section-header">🔬 Análisis IA Comparativo ({idioma})</div>', unsafe_allow_html=True)
                 
                 peers_insights = obtener_financial_insights_peers(peers[:5])
                 
@@ -1131,12 +1417,9 @@ Da la respuesta en formato plano, sin asteriscos ni formato markdown.
         st.markdown("---")
         st.warning("⚠️ Esto no es recomendación financiera. Solo fines educativos.")
 
-        # ==============================
-        # FOOTER
-        # ==============================
         st.markdown("""
         <div style='text-align:center; color:gray; font-size:11px; margin-top: 40px;'>
         📊 <b>Fuentes:</b> Yahoo Finance, Finviz & Banxico | 🤖 <b>IA:</b> Gemini 2.5 Flash<br>
-        🎓 Ingeniería Financiera | 💻 Versión 4.3 | ⚖️ Solo para uso educativo
+        🎓 Ingeniería Financiera | 💻 Versión 5.0 | ⚖️ Solo para uso educativo
         </div>
         """, unsafe_allow_html=True)
