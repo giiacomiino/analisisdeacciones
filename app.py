@@ -15,47 +15,21 @@ st.set_page_config(page_title="Análisis Integral de Acciones", layout="wide", i
 
 # Verificar disponibilidad de Gemini
 GEMINI_DISPONIBLE = True
-GEMINI_ERROR_INIT = None
-
 try:
-    # Verificar que st.secrets está disponible
-    if not hasattr(st, 'secrets'):
-        raise ValueError("st.secrets no está disponible. Asegúrate de estar usando Streamlit correctamente.")
-    
-    # Intentar obtener la API key
-    api_key = st.secrets.get("GEMINI_API_KEY", None)
-    
-    if api_key is None:
-        raise KeyError("GEMINI_API_KEY no encontrada en secrets")
-    
-    # Validar que la API key no esté vacía
-    api_key = str(api_key).strip()
-    if not api_key or len(api_key) < 10:
-        raise ValueError(f"API Key inválida (longitud: {len(api_key)})")
-    
-    # Configurar Gemini
-    genai.configure(api_key=api_key)
-    # No hacer llamada de prueba para no consumir cuota
-    
-except KeyError as e:
+    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+    modelo_test = genai.GenerativeModel("gemini-2.5-flash")
+except:
     GEMINI_DISPONIBLE = False
-    GEMINI_ERROR_INIT = f"API Key no configurada en secrets: {str(e)}"
-except Exception as e:
-    GEMINI_DISPONIBLE = False
-    GEMINI_ERROR_INIT = f"Error al configurar Gemini: {type(e).__name__} - {str(e)}"
 
 # Inicializar session_state
 if "ticker" not in st.session_state:
     st.session_state["ticker"] = None
 if "analizar" not in st.session_state:
     st.session_state["analizar"] = False
-if "ai_error" not in st.session_state:
-    st.session_state["ai_error"] = None
 
 # -----------------------------
 # FUNCIONES
 # -----------------------------
-@st.cache_data(ttl=86400)
 def obtener_tasa_libre_riesgo():
     """Obtiene la tasa CETES 28 desde Banxico como proxy de tasa libre de riesgo."""
     try:
@@ -78,7 +52,6 @@ def obtener_tasa_libre_riesgo():
         return 0.07
 
 
-@st.cache_data(ttl=3600)
 def buscar_empresas_detallado(nombre):
     """Busca empresas en Yahoo Finance y devuelve nombre, ticker, precio, país y logo."""
     try:
@@ -118,7 +91,6 @@ def buscar_empresas_detallado(nombre):
         return []
 
 
-@st.cache_data(ttl=86400)
 def obtener_peers_finviz(ticker):
     try:
         url = f"https://finviz.com/quote.ashx?t={ticker}"
@@ -135,7 +107,6 @@ def obtener_peers_finviz(ticker):
         return []
 
 
-@st.cache_data(ttl=86400)
 def obtener_financial_insights_yf(ticker):
     try:
         url = f"https://finance.yahoo.com/quote/{ticker}"
@@ -161,7 +132,6 @@ def obtener_financial_insights_yf(ticker):
         return None
 
 
-@st.cache_data(ttl=86400)
 def obtener_financial_insights_peers(peers_tickers):
     insights_dict = {}
     for t in peers_tickers:
@@ -171,7 +141,6 @@ def obtener_financial_insights_peers(peers_tickers):
     return insights_dict
 
 
-@st.cache_data(ttl=86400)
 def obtener_income_yahoo(ticker):
     try:
         t = yf.Ticker(ticker)
@@ -179,59 +148,7 @@ def obtener_income_yahoo(ticker):
         claves = ["Total Revenue", "Cost Of Revenue", "Gross Profit", "Operating Income", "Net Income", "EBIT", "EBITDA"]
         if df.empty:
             return pd.DataFrame()
-        # Filtrar solo claves que existen en el índice
-        claves_existentes = [c for c in claves if c in df.index]
-        df = df.loc[claves_existentes].reindex(claves).fillna(0).astype(float).T
-        df.index = [i.strftime("%Y-%m-%d") for i in df.index]
-        data = []
-        for m in df.columns:
-            vals = [
-                f"{v/1e9:,.1f} B" if abs(v) >= 1e9 else
-                f"{v/1e6:,.0f} M" if abs(v) >= 1e6 else
-                f"{v:,.0f}"
-                for v in df[m]
-            ]
-            data.append([m] + vals)
-        return pd.DataFrame(data, columns=["Métrica"] + list(df.index))
-    except:
-        return pd.DataFrame()
-
-
-@st.cache_data(ttl=86400)
-def obtener_balance_yahoo(ticker):
-    try:
-        t = yf.Ticker(ticker)
-        df = t.balance_sheet
-        claves = ["Total Assets", "Total Liabilities Net Minority Interest", "Total Equity Gross Minority Interest", "Total Debt", "Net Debt"]
-        if df.empty:
-            return pd.DataFrame()
-        claves_existentes = [c for c in claves if c in df.index]
-        df = df.loc[claves_existentes].reindex(claves).fillna(0).astype(float).T
-        df.index = [i.strftime("%Y-%m-%d") for i in df.index]
-        data = []
-        for m in df.columns:
-            vals = [
-                f"{v/1e9:,.1f} B" if abs(v) >= 1e9 else
-                f"{v/1e6:,.0f} M" if abs(v) >= 1e6 else
-                f"{v:,.0f}"
-                for v in df[m]
-            ]
-            data.append([m] + vals)
-        return pd.DataFrame(data, columns=["Métrica"] + list(df.index))
-    except:
-        return pd.DataFrame()
-
-
-@st.cache_data(ttl=86400)
-def obtener_cashflow_yahoo(ticker):
-    try:
-        t = yf.Ticker(ticker)
-        df = t.cashflow
-        claves = ["Operating Cash Flow", "Investing Cash Flow", "Financing Cash Flow", "Free Cash Flow"]
-        if df.empty:
-            return pd.DataFrame()
-        claves_existentes = [c for c in claves if c in df.index]
-        df = df.loc[claves_existentes].reindex(claves).fillna(0).astype(float).T
+        df = df.loc[df.index.intersection(claves)].reindex(claves).fillna(0).astype(float).T
         df.index = [i.strftime("%Y-%m-%d") for i in df.index]
         data = []
         for m in df.columns:
@@ -262,7 +179,6 @@ def traducir_descripcion(texto, idioma_destino):
         return texto
 
 
-@st.cache_data(ttl=86400)
 def obtener_kpis_peers(ticker, peers_list):
     resultados = []
     for t in [ticker] + peers_list[:5]:
@@ -309,130 +225,12 @@ def extraer_precios_columna(datos):
             return datos["Close"].astype(float)
 
 
-@st.cache_data(ttl=3600)
-def descargar_datos_historicos(ticker, period, interval):
-    return yf.download(ticker, period=period, interval=interval, progress=False)
-
-
-@st.cache_data(ttl=3600)
-def obtener_noticias_yf(ticker):
-    """Obtiene noticias recientes de Yahoo Finance."""
-    try:
-        t = yf.Ticker(ticker)
-        news = t.news
-        
-        if not news:
-            return []
-        
-        # Procesar las noticias al nuevo formato
-        noticias_procesadas = []
-        for item in news:
-            try:
-                # El nuevo formato tiene estructura anidada
-                if isinstance(item, dict):
-                    # Extraer contenido principal
-                    content = item.get('content', {})
-                    
-                    noticia = {
-                        'title': content.get('title', 'Sin título'),
-                        'link': content.get('canonicalUrl', {}).get('url', content.get('clickThroughUrl', {}).get('url', '#')),
-                        'publisher': content.get('provider', {}).get('displayName', 'Desconocido'),
-                        'published': content.get('pubDate', ''),
-                        'summary': content.get('summary', '')
-                    }
-                    noticias_procesadas.append(noticia)
-            except Exception as e:
-                # Si hay error procesando una noticia específica, continuar con las demás
-                continue
-        
-        return noticias_procesadas if noticias_procesadas else []
-    except Exception as e:
-        return []
-
-
-def analizar_sentimiento_gemini(ticker, noticias):
-    """Analiza el sentimiento de las noticias usando Gemini."""
-    if not GEMINI_DISPONIBLE or not noticias:
-        return None
-    
-    headlines = [n.get('title', '') for n in noticias[:10]]
-    headlines_text = "\n".join([f"- {h}" for h in headlines])
-    
-    prompt = f"""
-    Analiza el sentimiento de mercado para {ticker} basado en estos titulares recientes:
-    {headlines_text}
-    
-    Clasifica el sentimiento general como: POSITIVO, NEUTRAL o NEGATIVO.
-    Provee un resumen muy breve (máximo 50 palabras) explicando por qué.
-    Formato de respuesta:
-    SENTIMIENTO: [SENTIMIENTO]
-    RESUMEN: [Resumen]
-    """
-    
-    try:
-        modelo = genai.GenerativeModel("gemini-2.5-flash")
-        respuesta = modelo.generate_content(prompt)
-        
-        # Verificar si la respuesta está bloqueada
-        if hasattr(respuesta, 'prompt_feedback') and respuesta.prompt_feedback.block_reason:
-            return None
-            
-        # Verificar si hay texto en la respuesta
-        if hasattr(respuesta, 'text'):
-            return respuesta.text.strip()
-        else:
-            return None
-            
-    except Exception as e:
-        error_msg = str(e)
-        
-        # Guardar el error en session_state
-        st.session_state['ai_error'] = error_msg
-        
-        return None
-
-
-def calcular_indicadores(df):
-    """Calcula indicadores técnicos básicos."""
-    if df.empty:
-        return df
-    
-    # SMA
-    df['SMA_20'] = df['Close'].rolling(window=20).mean()
-    df['SMA_50'] = df['Close'].rolling(window=50).mean()
-    df['SMA_200'] = df['Close'].rolling(window=200).mean()
-    
-    # EMA
-    df['EMA_20'] = df['Close'].ewm(span=20, adjust=False).mean()
-    df['EMA_50'] = df['Close'].ewm(span=50, adjust=False).mean()
-    
-    # RSI
-    delta = df['Close'].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-    rs = gain / loss
-    df['RSI'] = 100 - (100 / (1 + rs))
-    
-    # MACD
-    exp1 = df['Close'].ewm(span=12, adjust=False).mean()
-    exp2 = df['Close'].ewm(span=26, adjust=False).mean()
-    df['MACD'] = exp1 - exp2
-    df['Signal_Line'] = df['MACD'].ewm(span=9, adjust=False).mean()
-    
-    # Bollinger Bands
-    df['BB_Middle'] = df['Close'].rolling(window=20).mean()
-    df['BB_Std'] = df['Close'].rolling(window=20).std()
-    df['BB_Upper'] = df['BB_Middle'] + (2 * df['BB_Std'])
-    df['BB_Lower'] = df['BB_Middle'] - (2 * df['BB_Std'])
-    
-    return df
-
 def calcular_metricas_periodo(ticker, indice_ticker, periodo_dias, tasa_libre_riesgo):
     """Calcula métricas de rendimiento y riesgo para un periodo específico."""
     try:
         # Descargar datos
-        datos_ticker = descargar_datos_historicos(ticker, period="5y", interval="1d")
-        datos_indice = descargar_datos_historicos(indice_ticker, period="5y", interval="1d")
+        datos_ticker = yf.download(ticker, period="5y", interval="1d", progress=False)
+        datos_indice = yf.download(indice_ticker, period="5y", interval="1d", progress=False)
 
         precios_ticker = extraer_precios_columna(datos_ticker).dropna()
         precios_indice = extraer_precios_columna(datos_indice).dropna()
@@ -479,42 +277,18 @@ def calcular_metricas_periodo(ticker, indice_ticker, periodo_dias, tasa_libre_ri
 
 
 def generar_analisis_ai(prompt):
-    """Genera análisis con AI si está disponible, sino retorna None."""
+    """Genera análisis con Gemini si está disponible, sino retorna None."""
     if not GEMINI_DISPONIBLE:
-        st.session_state['ai_error'] = "API Key no configurada"
         return None
     
     try:
         modelo = genai.GenerativeModel("gemini-2.5-flash")
         respuesta = modelo.generate_content(prompt)
-        
-        # Verificar si la respuesta está bloqueada
-        if hasattr(respuesta, 'prompt_feedback') and respuesta.prompt_feedback.block_reason:
-            st.session_state['ai_error'] = f"Contenido bloqueado: {respuesta.prompt_feedback.block_reason}"
-            return None
-            
-        # Verificar si hay texto en la respuesta
-        if hasattr(respuesta, 'text'):
-            return respuesta.text.strip()
-        else:
-            st.session_state['ai_error'] = "Respuesta sin texto"
-            return None
-            
+        return respuesta.text.strip()
     except Exception as e:
-        error_msg = str(e)
-        
-        # Guardar el error en session_state para debugging
-        st.session_state['ai_error'] = error_msg
-        
-        if "429" in error_msg or "quota" in error_msg.lower() or "resource_exhausted" in error_msg.lower():
-            st.session_state['ai_error'] = "Límite de cuota alcanzado"
+        if "429" in str(e) or "quota" in str(e).lower() or "rate" in str(e).lower():
             return None
-        elif "api_key" in error_msg.lower() or "invalid" in error_msg.lower():
-            st.session_state['ai_error'] = "API Key inválida"
-            return None
-        else:
-            # Para otros errores, mostrar el mensaje completo
-            return None
+        return None
 
 
 # -----------------------------
@@ -525,33 +299,7 @@ st.caption("Análisis profesional con Yahoo Finance, Finviz y Gemini AI")
 
 # Mostrar advertencia si Gemini no está disponible
 if not GEMINI_DISPONIBLE:
-    if GEMINI_ERROR_INIT:
-        st.error(f"⚠️ **IA no disponible:** {GEMINI_ERROR_INIT}")
-        with st.expander("ℹ️ Ver información de depuración"):
-            st.markdown("""
-            **Pasos para configurar la API Key en Streamlit Cloud:**
-            
-            1. Ve a tu app en Streamlit Cloud
-            2. Click en **Settings** (⚙️) en la esquina superior derecha
-            3. Click en **Secrets** en el menú lateral
-            4. Agrega el siguiente contenido (exactamente con este formato):
-            
-            ```toml
-            GEMINI_API_KEY = "tu-api-key-aquí"
-            ```
-            
-            **IMPORTANTE:**
-            - El nombre debe ser GEMINI_API_KEY (sin comillas)
-            - Debe haber UN ESPACIO antes y después del signo =
-            - El valor de la API key DEBE estar entre comillas
-            - No debe haber otros caracteres o espacios adicionales
-            
-            5. Click en **Save**
-            6. La app se reiniciará automáticamente
-            """)
-    else:
-        st.warning("⚠️ **Funcionalidad limitada:** El servicio de IA (Gemini) no está disponible actualmente. La app funcionará con todas las métricas y gráficos, pero sin análisis de IA ni traducciones.")
-
+    st.warning("⚠️ **Funcionalidad limitada:** El servicio de IA (Gemini) no está disponible actualmente debido a límite de requests. La app funcionará con todas las métricas y gráficos, pero sin análisis de IA ni traducciones.")
 
 st.markdown("---")
 
@@ -679,7 +427,7 @@ else:
         financial_insights = obtener_financial_insights_yf(ticker_final)
 
         if financial_insights:
-            st.subheader("✨ Insights Financieros")
+            st.subheader("✨ Financial Insights")
             st.markdown(
                 f"""
                 <div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
@@ -699,24 +447,85 @@ else:
         # ==============================
         # INFORMACIÓN GENERAL - DISEÑO MEJORADO
         # ==============================
-        st.subheader("🏢 Información General")
+        st.markdown("""
+            <style>
+            .info-card {
+                background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+                padding: 25px;
+                border-radius: 15px;
+                color: white;
+                box-shadow: 0 8px 25px rgba(0,0,0,0.3);
+                margin-bottom: 15px;
+                transition: transform 0.3s ease;
+            }
+            .info-card:hover {
+                transform: translateY(-5px);
+            }
+            .info-label {
+                font-size: 12px;
+                opacity: 0.8;
+                text-transform: uppercase;
+                letter-spacing: 1px;
+                margin-bottom: 5px;
+            }
+            .info-value {
+                font-size: 24px;
+                font-weight: bold;
+                color: #ffffff;
+            }
+            .section-header {
+                background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+                font-size: 28px;
+                font-weight: bold;
+                margin-bottom: 20px;
+            }
+            </style>
+        """, unsafe_allow_html=True)
+
+        st.markdown('<div class="section-header">🏢 Información General</div>', unsafe_allow_html=True)
         
-        # Card principal con información de la empresa
-        st.markdown(f"""
-            <div style='background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
-                        padding: 30px; border-radius: 15px; color: white;
-                        box-shadow: 0 8px 25px rgba(0,0,0,0.3); margin-bottom: 25px;'>
-                <div style='display: flex; justify-content: space-between; align-items: center;'>
-                    <div>
-                        <h2 style='margin: 0; font-size: 32px; font-weight: bold;'>{info.get('longName', 'N/A')}</h2>
-                        <p style='margin: 5px 0; font-size: 16px; opacity: 0.9;'>
-                            🏭 {info.get('sector', 'N/A')} • {info.get('industry', 'N/A')}
-                        </p>
-                        <p style='margin: 5px 0; font-size: 14px; opacity: 0.8;'>
-                            📍 {info.get('country', 'N/A')} • 👥 {f"{info.get('fullTimeEmployees', 0):,}" if info.get('fullTimeEmployees') else "N/A"} empleados
-                        </p>
-                    </div>
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.markdown(f"""
+                <div class="info-card">
+                    <div class="info-label">🏢 Empresa</div>
+                    <div class="info-value">{info.get('longName', 'N/A')[:30]}</div>
                 </div>
+            """, unsafe_allow_html=True)
+        
+        with col2:
+            st.markdown(f"""
+                <div class="info-card">
+                    <div class="info-label">🏭 Sector</div>
+                    <div class="info-value">{info.get('sector', 'N/A')}</div>
+                </div>
+            """, unsafe_allow_html=True)
+        
+        with col3:
+            st.markdown(f"""
+                <div class="info-card">
+                    <div class="info-label">🌍 País</div>
+                    <div class="info-value">{info.get('country', 'N/A')}</div>
+                </div>
+            """, unsafe_allow_html=True)
+        
+        with col4:
+            empleados = f"{info.get('fullTimeEmployees', 0):,}" if info.get('fullTimeEmployees') else "N/A"
+            st.markdown(f"""
+                <div class="info-card">
+                    <div class="info-label">👥 Empleados</div>
+                    <div class="info-value">{empleados}</div>
+                </div>
+            """, unsafe_allow_html=True)
+
+        # Industria en fila separada
+        st.markdown(f"""
+            <div class="info-card">
+                <div class="info-label">🔧 Industria</div>
+                <div class="info-value">{info.get('industry', 'N/A')}</div>
             </div>
         """, unsafe_allow_html=True)
 
@@ -735,73 +544,36 @@ else:
 
 
         # ==============================
-        # MÉTRICAS BURSÁTILES
+        # KPIs - MÉTRICAS BURSÁTILES
         # ==============================
-        st.subheader("📈 Métricas Bursátiles")
+        st.markdown('<div class="section-header">📈 Métricas Bursátiles</div>', unsafe_allow_html=True)
         
         st.markdown("""
             <style>
-            .metric-card {
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            .kpi-card {
+                background: linear-gradient(135deg, #134E5E 0%, #71B280 100%);
                 padding: 20px;
                 border-radius: 12px;
                 text-align: center;
                 color: white;
-                box-shadow: 0 6px 20px rgba(0,0,0,0.25);
-                margin-bottom: 15px;
-                transition: all 0.3s ease;
-                position: relative; /* Necesario para el tooltip */
-            }
-            .metric-card:hover {
-                transform: translateY(-5px);
-                box-shadow: 0 10px 30px rgba(0,0,0,0.35);
-            }
-            /* Tooltip CSS */
-            .metric-card[data-tooltip]:hover::after {
-                content: attr(data-tooltip);
-                position: absolute;
-                bottom: 100%;
-                left: 50%;
-                transform: translateX(-50%);
-                background-color: #333;
-                color: white;
-                padding: 8px 12px;
-                border-radius: 6px;
-                font-size: 12px;
-                white-space: normal;
-                width: 200px;
-                z-index: 1000;
-                opacity: 0;
-                animation: fadeIn 0.3s forwards;
-                pointer-events: none;
-                box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+                box-shadow: 0 6px 20px rgba(0,0,0,0.3);
                 margin-bottom: 10px;
+                transition: all 0.3s ease;
+                border: 2px solid transparent;
             }
-            @keyframes fadeIn {
-                to { opacity: 1; }
+            .kpi-card:hover {
+                transform: translateY(-8px);
+                border: 2px solid #71B280;
+                box-shadow: 0 10px 30px rgba(113, 178, 128, 0.4);
             }
-            /* Triángulo del tooltip */
-            .metric-card[data-tooltip]:hover::before {
-                content: '';
-                position: absolute;
-                bottom: 100%;
-                left: 50%;
-                transform: translateX(-50%);
-                border-width: 6px;
-                border-style: solid;
-                border-color: #333 transparent transparent transparent;
-                margin-bottom: -2px; /* Ajuste fino */
-                opacity: 0;
-                animation: fadeIn 0.3s forwards;
-            }
-            .metric-label {
+            .kpi-label {
                 font-size: 13px;
                 opacity: 0.9;
                 margin-bottom: 8px;
                 font-weight: 500;
                 letter-spacing: 0.5px;
             }
-            .metric-value-big {
+            .kpi-value {
                 font-size: 28px;
                 font-weight: bold;
                 color: white;
@@ -809,285 +581,139 @@ else:
             </style>
         """, unsafe_allow_html=True)
         
-        # Diccionario de definiciones
-        tooltips = {
-            "precio": "El precio actual de una acción en el mercado.",
-            "market_cap": "Capitalización de Mercado: Valor total de todas las acciones de la empresa (Precio x Acciones en circulación).",
-            "pe": "Price-to-Earnings Ratio: Mide cuánto pagan los inversores por cada dólar de ganancia. Un P/E alto puede indicar crecimiento o sobrevaloración.",
-            "beta": "Mide la volatilidad de una acción respecto al mercado. Beta > 1 es más volátil, Beta < 1 es menos volátil.",
-            "eps": "Earnings Per Share (Beneficio por Acción): Ganancia neta dividida por el número de acciones.",
-            "high52": "El precio más alto alcanzado en las últimas 52 semanas.",
-            "low52": "El precio más bajo alcanzado en las últimas 52 semanas.",
-            "volumen": "Número de acciones negociadas en el día actual.",
-            "avg_vol": "Promedio de acciones negociadas diariamente en los últimos 3 meses.",
-            "div_yield": "Dividend Yield: Porcentaje del precio de la acción que se paga como dividendos anualmente."
-        }
-        
         col1, col2, col3, col4, col5 = st.columns(5)
         
-        # Precio Actual
-        precio_actual = info.get('currentPrice') or info.get('regularMarketPrice', 0)
-        col1.markdown(f"""
-            <div class="metric-card" data-tooltip="{tooltips['precio']}">
-                <div class="metric-label">💵 Precio Actual</div>
-                <div class="metric-value-big">${precio_actual:.2f}</div>
-            </div>
-        """, unsafe_allow_html=True)
+        with col1:
+            market_cap = f"${info.get('marketCap', 0)/1e9:,.1f}B" if info.get('marketCap') else "N/A"
+            st.markdown(f"""
+                <div class="kpi-card">
+                    <div class="kpi-label">💰 Market Cap</div>
+                    <div class="kpi-value">{market_cap}</div>
+                </div>
+            """, unsafe_allow_html=True)
         
-        # Market Cap
-        market_cap = info.get('marketCap', 0)
-        col2.markdown(f"""
-            <div class="metric-card" data-tooltip="{tooltips['market_cap']}">
-                <div class="metric-label">🏦 Market Cap</div>
-                <div class="metric-value-big">${market_cap/1e9:.1f}B</div>
-            </div>
-        """, unsafe_allow_html=True)
+        with col2:
+            pe = f"{info.get('trailingPE', 0):.2f}" if info.get('trailingPE') else "N/A"
+            st.markdown(f"""
+                <div class="kpi-card">
+                    <div class="kpi-label">📊 P/E Ratio</div>
+                    <div class="kpi-value">{pe}</div>
+                </div>
+            """, unsafe_allow_html=True)
         
-        # P/E Ratio
-        pe = info.get('trailingPE', 0)
-        col3.markdown(f"""
-            <div class="metric-card" data-tooltip="{tooltips['pe']}">
-                <div class="metric-label">📊 P/E Ratio</div>
-                <div class="metric-value-big">{pe:.2f}</div>
-            </div>
-        """, unsafe_allow_html=True)
+        with col3:
+            eps = f"${info.get('trailingEps', 0):.2f}" if info.get('trailingEps') else "N/A"
+            st.markdown(f"""
+                <div class="kpi-card">
+                    <div class="kpi-label">💵 EPS</div>
+                    <div class="kpi-value">{eps}</div>
+                </div>
+            """, unsafe_allow_html=True)
         
-        # Beta
-        beta = info.get('beta', 0)
-        col4.markdown(f"""
-            <div class="metric-card" data-tooltip="{tooltips['beta']}">
-                <div class="metric-label">📉 Beta</div>
-                <div class="metric-value-big">{beta:.2f}</div>
-            </div>
-        """, unsafe_allow_html=True)
+        with col4:
+            beta = f"{info.get('beta', 0):.2f}" if info.get('beta') else "N/A"
+            st.markdown(f"""
+                <div class="kpi-card">
+                    <div class="kpi-label">📉 Beta</div>
+                    <div class="kpi-value">{beta}</div>
+                </div>
+            """, unsafe_allow_html=True)
         
-        # EPS
-        eps = info.get('trailingEps', 0)
-        col5.markdown(f"""
-            <div class="metric-card" data-tooltip="{tooltips['eps']}">
-                <div class="metric-label">💰 EPS</div>
-                <div class="metric-value-big">${eps:.2f}</div>
-            </div>
-        """, unsafe_allow_html=True)
-        
-        # Segunda fila
-        col1, col2, col3, col4, col5 = st.columns(5)
-        
-        # 52 Week High
-        high_52 = info.get('fiftyTwoWeekHigh', 0)
-        col1.markdown(f"""
-            <div class="metric-card" data-tooltip="{tooltips['high52']}">
-                <div class="metric-label">📈 52W High</div>
-                <div class="metric-value-big">${high_52:.2f}</div>
-            </div>
-        """, unsafe_allow_html=True)
-        
-        # 52 Week Low
-        low_52 = info.get('fiftyTwoWeekLow', 0)
-        col2.markdown(f"""
-            <div class="metric-card" data-tooltip="{tooltips['low52']}">
-                <div class="metric-label">📉 52W Low</div>
-                <div class="metric-value-big">${low_52:.2f}</div>
-            </div>
-        """, unsafe_allow_html=True)
-        
-        # Volume
-        volume = info.get('volume', 0)
-        col3.markdown(f"""
-            <div class="metric-card" data-tooltip="{tooltips['volumen']}">
-                <div class="metric-label">📊 Volumen</div>
-                <div class="metric-value-big">{volume/1e6:.1f}M</div>
-            </div>
-        """, unsafe_allow_html=True)
-        
-        # Avg Volume
-        avg_vol = info.get('averageVolume', 0)
-        col4.markdown(f"""
-            <div class="metric-card" data-tooltip="{tooltips['avg_vol']}">
-                <div class="metric-label">📊 Vol. Promedio</div>
-                <div class="metric-value-big">{avg_vol/1e6:.1f}M</div>
-            </div>
-        """, unsafe_allow_html=True)
-        
-        # Dividend Yield
-        div_yield = info.get('dividendYield', 0)
-        col5.markdown(f"""
-            <div class="metric-card" data-tooltip="{tooltips['div_yield']}">
-                <div class="metric-label">💵 Div. Yield</div>
-                <div class="metric-value-big">{div_yield*100:.2f}%</div>
-            </div>
-        """, unsafe_allow_html=True)
+        with col5:
+            div_yield = f"{info.get('dividendYield', 0)*100:.2f}%" if info.get('dividendYield') else "—"
+            st.markdown(f"""
+                <div class="kpi-card">
+                    <div class="kpi-label">💸 Div. Yield</div>
+                    <div class="kpi-value">{div_yield}</div>
+                </div>
+            """, unsafe_allow_html=True)
 
-        st.markdown("---")
-
+        st.markdown("<br>", unsafe_allow_html=True)
 
         # ==============================
-        # MÉTRICAS CORPORATIVAS
+        # KPIs - MÉTRICAS CORPORATIVAS
         # ==============================
-        st.subheader("🏢 Métricas Corporativas")
+        st.markdown('<div class="section-header">🏦 Métricas Corporativas</div>', unsafe_allow_html=True)
         
         st.markdown("""
             <style>
-            .corporate-card {
-                background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            .corp-card {
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
                 padding: 20px;
                 border-radius: 12px;
                 text-align: center;
                 color: white;
-                box-shadow: 0 6px 20px rgba(0,0,0,0.25);
-                margin-bottom: 15px;
-                transition: all 0.3s ease;
-                position: relative;
-            }
-            .corporate-card:hover {
-                transform: translateY(-5px);
-                box-shadow: 0 10px 30px rgba(0,0,0,0.35);
-            }
-            /* Tooltip CSS para Corporate */
-            .corporate-card[data-tooltip]:hover::after {
-                content: attr(data-tooltip);
-                position: absolute;
-                bottom: 100%;
-                left: 50%;
-                transform: translateX(-50%);
-                background-color: #333;
-                color: white;
-                padding: 8px 12px;
-                border-radius: 6px;
-                font-size: 12px;
-                white-space: normal;
-                width: 200px;
-                z-index: 1000;
-                opacity: 0;
-                animation: fadeIn 0.3s forwards;
-                pointer-events: none;
-                box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+                box-shadow: 0 6px 20px rgba(0,0,0,0.3);
                 margin-bottom: 10px;
+                transition: all 0.3s ease;
+                border: 2px solid transparent;
             }
-            .corporate-card[data-tooltip]:hover::before {
-                content: '';
-                position: absolute;
-                bottom: 100%;
-                left: 50%;
-                transform: translateX(-50%);
-                border-width: 6px;
-                border-style: solid;
-                border-color: #333 transparent transparent transparent;
-                margin-bottom: -2px;
-                opacity: 0;
-                animation: fadeIn 0.3s forwards;
+            .corp-card:hover {
+                transform: translateY(-8px);
+                border: 2px solid #764ba2;
+                box-shadow: 0 10px 30px rgba(118, 75, 162, 0.4);
+            }
+            .corp-label {
+                font-size: 13px;
+                opacity: 0.9;
+                margin-bottom: 8px;
+                font-weight: 500;
+                letter-spacing: 0.5px;
+            }
+            .corp-value {
+                font-size: 28px;
+                font-weight: bold;
+                color: white;
             }
             </style>
         """, unsafe_allow_html=True)
-        
-        # Diccionario de definiciones corporativas
-        corp_tooltips = {
-            "revenue": "Ingresos totales de la empresa en los últimos 12 meses (TTM).",
-            "net_income": "Utilidad Neta: Ganancia total después de todos los gastos e impuestos.",
-            "roe": "Return on Equity: Mide la rentabilidad generada con el dinero de los accionistas.",
-            "profit_margin": "Margen de Ganancia: Porcentaje de ingresos que se convierte en ganancia neta.",
-            "gross_margin": "Margen Bruto: Porcentaje de ingresos que queda después de restar el costo de ventas.",
-            "op_margin": "Margen Operativo: Porcentaje de ingresos después de gastos operativos pero antes de impuestos.",
-            "roa": "Return on Assets: Mide qué tan eficiente es la empresa usando sus activos para generar ganancias.",
-            "debt_equity": "Relación Deuda/Capital: Mide el apalancamiento financiero. Valores altos indican mayor riesgo.",
-            "current_ratio": "Radio de Liquidez: Capacidad de la empresa para pagar sus deudas a corto plazo (Activo Cte / Pasivo Cte).",
-            "fcf": "Free Cash Flow: Efectivo generado por la empresa después de mantener sus activos (CAPEX)."
-        }
-        
-        col1, col2, col3, col4, col5 = st.columns(5)
-        
-        # Revenue
-        revenue = info.get('totalRevenue', 0)
-        col1.markdown(f"""
-            <div class="corporate-card" data-tooltip="{corp_tooltips['revenue']}">
-                <div class="metric-label">💼 Ventas 12M TTM</div>
-                <div class="metric-value-big">${revenue/1e9:.1f}B</div>
-            </div>
-        """, unsafe_allow_html=True)
-        
-        # Net Income
-        net_income = info.get('netIncomeToCommon', 0)
-        col2.markdown(f"""
-            <div class="corporate-card" data-tooltip="{corp_tooltips['net_income']}">
-                <div class="metric-label">💵 Utilidad Neta</div>
-                <div class="metric-value-big">${net_income/1e9:.1f}B</div>
-            </div>
-        """, unsafe_allow_html=True)
-        
-        # ROE
-        roe = info.get('returnOnEquity', 0)
-        col3.markdown(f"""
-            <div class="corporate-card" data-tooltip="{corp_tooltips['roe']}">
-                <div class="metric-label">📊 ROE</div>
-                <div class="metric-value-big">{roe*100:.1f}%</div>
-            </div>
-        """, unsafe_allow_html=True)
-        
-        # Profit Margin
-        profit_margin = info.get('profitMargins', 0)
-        col4.markdown(f"""
-            <div class="corporate-card" data-tooltip="{corp_tooltips['profit_margin']}">
-                <div class="metric-label">📈 Margen de Ganancia</div>
-                <div class="metric-value-big">{profit_margin*100:.1f}%</div>
-            </div>
-        """, unsafe_allow_html=True)
-        
-        # Gross Margin
-        gross_margin = info.get('grossMargins', 0)
-        col5.markdown(f"""
-            <div class="corporate-card" data-tooltip="{corp_tooltips['gross_margin']}">
-                <div class="metric-label">📊 Margen Bruto</div>
-                <div class="metric-value-big">{gross_margin*100:.1f}%</div>
-            </div>
-        """, unsafe_allow_html=True)
 
-        # Segunda fila
         col1, col2, col3, col4, col5 = st.columns(5)
         
-        # Operating Margin
-        op_margin = info.get('operatingMargins', 0)
-        col1.markdown(f"""
-            <div class="corporate-card" data-tooltip="{corp_tooltips['op_margin']}">
-                <div class="metric-label">📊 Margen de Operación</div>
-                <div class="metric-value-big">{op_margin*100:.1f}%</div>
-            </div>
-        """, unsafe_allow_html=True)
+        with col1:
+            roe = f"{info.get('returnOnEquity', 0)*100:.1f}%" if info.get('returnOnEquity') else "N/A"
+            st.markdown(f"""
+                <div class="corp-card">
+                    <div class="corp-label">📈 ROE</div>
+                    <div class="corp-value">{roe}</div>
+                </div>
+            """, unsafe_allow_html=True)
         
-        # ROA
-        roa = info.get('returnOnAssets', 0)
-        col2.markdown(f"""
-            <div class="corporate-card" data-tooltip="{corp_tooltips['roa']}">
-                <div class="metric-label">💼 ROA</div>
-                <div class="metric-value-big">{roa*100:.1f}%</div>
-            </div>
-        """, unsafe_allow_html=True)
+        with col2:
+            gross_margin = f"{info.get('grossMargins', 0)*100:.1f}%" if info.get('grossMargins') else "N/A"
+            st.markdown(f"""
+                <div class="corp-card">
+                    <div class="corp-label">📊 Gross Margin</div>
+                    <div class="corp-value">{gross_margin}</div>
+                </div>
+            """, unsafe_allow_html=True)
         
-        # Debt to Equity
-        debt_equity = info.get('debtToEquity', 0)
-        col3.markdown(f"""
-            <div class="corporate-card" data-tooltip="{corp_tooltips['debt_equity']}">
-                <div class="metric-label">⚖️ Deuda/Equity</div>
-                <div class="metric-value-big">{debt_equity/100:.2f}</div>
-            </div>
-        """, unsafe_allow_html=True)
+        with col3:
+            profit_margin = f"{info.get('profitMargins', 0)*100:.1f}%" if info.get('profitMargins') else "N/A"
+            st.markdown(f"""
+                <div class="corp-card">
+                    <div class="corp-label">💹 Profit Margin</div>
+                    <div class="corp-value">{profit_margin}</div>
+                </div>
+            """, unsafe_allow_html=True)
         
-        # Current Ratio
-        current_ratio = info.get('currentRatio', 0)
-        col4.markdown(f"""
-            <div class="corporate-card" data-tooltip="{corp_tooltips['current_ratio']}">
-                <div class="metric-label">💧 Radio de Liquidez</div>
-                <div class="metric-value-big">{current_ratio:.2f}</div>
-            </div>
-        """, unsafe_allow_html=True)
+        with col4:
+            revenue = f"${info.get('totalRevenue', 0)/1e9:,.1f}B" if info.get('totalRevenue') else "N/A"
+            st.markdown(f"""
+                <div class="corp-card">
+                    <div class="corp-label">💰 Revenue TTM</div>
+                    <div class="corp-value">{revenue}</div>
+                </div>
+            """, unsafe_allow_html=True)
         
-        # Free Cash Flow
-        fcf = info.get('freeCashflow', 0)
-        col5.markdown(f"""
-            <div class="corporate-card" data-tooltip="{corp_tooltips['fcf']}">
-                <div class="metric-label">💰 Free Cash Flow</div>
-                <div class="metric-value-big">${fcf/1e9:.1f}B</div>
-            </div>
-        """, unsafe_allow_html=True)
+        with col5:
+            net_income = f"${info.get('netIncomeToCommon', 0)/1e9:,.1f}B" if info.get('netIncomeToCommon') else "N/A"
+            st.markdown(f"""
+                <div class="corp-card">
+                    <div class="corp-label">💵 Net Income</div>
+                    <div class="corp-value">{net_income}</div>
+                </div>
+            """, unsafe_allow_html=True)
 
         st.markdown("---")
 
@@ -1114,29 +740,7 @@ else:
         # GRÁFICO DE VELAS
         # ==============================
         st.subheader("📊 Gráfico de Velas")
-
-        # Selector de periodo para el gráfico de velas
-        col_periodo, col_espacio = st.columns([2, 4])
-
-        with col_periodo:
-            periodo_velas_opciones = {
-                "1 Mes": "1mo",
-                "3 Meses": "3mo",
-                "6 Meses": "6mo",
-                "1 Año": "1y",
-                "2 Años": "2y",
-                "3 Años": "3y",
-                "5 Años": "5y"
-            }
-            
-            periodo_velas_sel = st.selectbox(
-                "Selecciona el periodo:",
-                list(periodo_velas_opciones.keys()),
-                index=3,  # Por defecto "1 Año"
-                key="periodo_velas"
-            )
-
-        datos = descargar_datos_historicos(ticker_final, period=periodo_velas_opciones[periodo_velas_sel], interval="1d")
+        datos = yf.download(ticker_final, period="1y", interval="1d", progress=False)
 
         if not datos.empty:
             if isinstance(datos.columns, pd.MultiIndex):
@@ -1144,119 +748,28 @@ else:
                 high_col = datos["High"].iloc[:, 0]
                 low_col = datos["Low"].iloc[:, 0]
                 close_col = datos["Close"].iloc[:, 0]
-                datos_flat = datos.iloc[:, :4].copy() # Simplificación para indicadores
-                datos_flat.columns = ["Close", "High", "Low", "Open"] # Ajuste temporal, mejor usar nombres correctos
-                # Reconstruir DataFrame plano para indicadores
-                df_ind = pd.DataFrame({
-                    "Open": open_col,
-                    "High": high_col,
-                    "Low": low_col,
-                    "Close": close_col
-                })
             else:
                 open_col = datos["Open"]
                 high_col = datos["High"]
                 low_col = datos["Low"]
                 close_col = datos["Close"]
-                df_ind = datos.copy()
 
-            # Calcular indicadores
-            df_ind = calcular_indicadores(df_ind)
-
-            # Selectores de indicadores
-            st.markdown("##### 🛠️ Indicadores Técnicos")
-            col_ind1, col_ind2, col_ind3, col_ind4 = st.columns(4)
-            with col_ind1:
-                show_sma = st.multiselect("SMA", ["20", "50", "200"], key="sma_sel")
-            with col_ind2:
-                show_ema = st.multiselect("EMA", ["20", "50"], key="ema_sel")
-            with col_ind3:
-                show_bb = st.checkbox("Bandas Bollinger", key="bb_sel")
-            with col_ind4:
-                show_osc = st.multiselect("Osciladores", ["RSI", "MACD"], key="osc_sel")
-
-            # Crear figura con subplots si es necesario
-            rows = 1
-            row_heights = [0.7]
-            specs = [[{"secondary_y": False}]]
-            
-            if "RSI" in show_osc:
-                rows += 1
-                row_heights.append(0.15)
-                specs.append([{"secondary_y": False}])
-            if "MACD" in show_osc:
-                rows += 1
-                row_heights.append(0.15)
-                specs.append([{"secondary_y": False}])
-            
-            # Normalizar alturas
-            total_h = sum(row_heights)
-            row_heights = [h/total_h for h in row_heights]
-
-            from plotly.subplots import make_subplots
-            fig = make_subplots(rows=rows, cols=1, shared_xaxes=True, 
-                                vertical_spacing=0.05, row_heights=row_heights)
-
-            # Velas
-            fig.add_trace(go.Candlestick(
-                x=df_ind.index,
-                open=df_ind["Open"],
-                high=df_ind["High"],
-                low=df_ind["Low"],
-                close=df_ind["Close"],
-                name="Precio",
+            fig = go.Figure(go.Candlestick(
+                x=datos.index,
+                open=open_col,
+                high=high_col,
+                low=low_col,
+                close=close_col,
                 increasing_line_color="#26A65B",
                 decreasing_line_color="#C0392B"
-            ), row=1, col=1)
+            ))
 
-            # SMA
-            colors_sma = {"20": "#F1C40F", "50": "#E67E22", "200": "#3498DB"}
-            for per in show_sma:
-                if f'SMA_{per}' in df_ind.columns:
-                    fig.add_trace(go.Scatter(x=df_ind.index, y=df_ind[f'SMA_{per}'], mode='lines', 
-                                            name=f'SMA {per}', line=dict(color=colors_sma.get(per, "white"), width=1)), row=1, col=1)
-
-            # EMA
-            colors_ema = {"20": "#9B59B6", "50": "#8E44AD"}
-            for per in show_ema:
-                if f'EMA_{per}' in df_ind.columns:
-                    fig.add_trace(go.Scatter(x=df_ind.index, y=df_ind[f'EMA_{per}'], mode='lines', 
-                                            name=f'EMA {per}', line=dict(color=colors_ema.get(per, "white"), width=1, dash='dot')), row=1, col=1)
-
-            # Bollinger Bands
-            if show_bb:
-                fig.add_trace(go.Scatter(x=df_ind.index, y=df_ind['BB_Upper'], mode='lines', name='BB Upper',
-                                        line=dict(color='rgba(255, 255, 255, 0.3)', width=1), showlegend=False), row=1, col=1)
-                fig.add_trace(go.Scatter(x=df_ind.index, y=df_ind['BB_Lower'], mode='lines', name='BB Lower',
-                                        line=dict(color='rgba(255, 255, 255, 0.3)', width=1), fill='tonexty', 
-                                        fillcolor='rgba(255, 255, 255, 0.05)', showlegend=False), row=1, col=1)
-
-            current_row = 2
-            
-            # RSI
-            if "RSI" in show_osc:
-                fig.add_trace(go.Scatter(x=df_ind.index, y=df_ind['RSI'], mode='lines', name='RSI', line=dict(color='#E74C3C')), row=current_row, col=1)
-                fig.add_hline(y=70, line_dash="dash", line_color="gray", row=current_row, col=1)
-                fig.add_hline(y=30, line_dash="dash", line_color="gray", row=current_row, col=1)
-                fig.update_yaxes(title_text="RSI", row=current_row, col=1)
-                current_row += 1
-
-            # MACD
-            if "MACD" in show_osc:
-                fig.add_trace(go.Scatter(x=df_ind.index, y=df_ind['MACD'], mode='lines', name='MACD', line=dict(color='#3498DB')), row=current_row, col=1)
-                fig.add_trace(go.Scatter(x=df_ind.index, y=df_ind['Signal_Line'], mode='lines', name='Signal', line=dict(color='#E67E22')), row=current_row, col=1)
-                fig.add_bar(x=df_ind.index, y=df_ind['MACD']-df_ind['Signal_Line'], name='Hist', marker_color='gray', row=current_row, col=1)
-                fig.update_yaxes(title_text="MACD", row=current_row, col=1)
-
-            fig.update_layout(template="plotly_dark", height=600 + (150 * (rows-1)), xaxis_rangeslider_visible=False,
-                            title=f"Análisis Técnico - {ticker_final} ({periodo_velas_sel})")
+            fig.update_layout(template="plotly_dark", height=600, xaxis_rangeslider_visible=False,
+                              title=f"Precio Histórico - {ticker_final}")
             st.plotly_chart(fig, use_container_width=True)
-            
-            # Botón de descarga para datos históricos
-            csv_hist = df_ind.to_csv().encode('utf-8')
-            st.download_button("⬇️ Descargar Datos Históricos", csv_hist, f"historico_{ticker_final}.csv", "text/csv", key='dl_hist')
 
         st.markdown("---")
+
 
         # ==============================
         # COMPARACIÓN CONTRA ÍNDICE (BASE 0)
@@ -1264,9 +777,9 @@ else:
         st.subheader("📈 Rendimiento Comparativo vs Índice")
 
         try:
-            datos_ticker = descargar_datos_historicos(ticker_final, period="1y", interval="1d")
+            datos_ticker = yf.download(ticker_final, period="1y", interval="1d", progress=False)
             indice_t = indices_dict[indice_select]
-            datos_indice = descargar_datos_historicos(indice_t, period="1y", interval="1d")
+            datos_indice = yf.download(indice_t, period="1y", interval="1d", progress=False)
 
             precios_ticker = extraer_precios_columna(datos_ticker)
             precios_indice = extraer_precios_columna(datos_indice)
@@ -1317,7 +830,7 @@ else:
                 fig_peers = go.Figure()
                 
                 # Agregar el ticker principal
-                datos_main = descargar_datos_historicos(ticker_final, period="1y", interval="1d")
+                datos_main = yf.download(ticker_final, period="1y", interval="1d", progress=False)
                 precios_main = extraer_precios_columna(datos_main)
                 rendimiento_main = ((precios_main / precios_main.iloc[0]) - 1) * 100
                 
@@ -1333,7 +846,7 @@ else:
                 colores_peers = ["#E67E22", "#26A65B", "#8E44AD", "#C0392B", "#F39C12"]
                 for i, peer in enumerate(peers[:5]):
                     try:
-                        datos_peer = descargar_datos_historicos(peer, period="1y", interval="1d")
+                        datos_peer = yf.download(peer, period="1y", interval="1d", progress=False)
                         precios_peer = extraer_precios_columna(datos_peer)
                         
                         if not precios_peer.empty:
@@ -1477,97 +990,13 @@ else:
 
 
         # ==============================
-        # ESTADOS FINANCIEROS
+        # INCOME STATEMENT
         # ==============================
-        st.subheader("� Estados Financieros")
-        
-        tab1, tab2, tab3 = st.tabs(["Income Statement", "Balance Sheet", "Cash Flow"])
-        
-        with tab1:
-            st.caption("Estado de Resultados")
-            df_income = obtener_income_yahoo(ticker_final)
-            if not df_income.empty:
-                st.dataframe(df_income, use_container_width=True, hide_index=True)
-                csv = df_income.to_csv(index=False).encode('utf-8')
-                st.download_button("⬇️ Descargar CSV", csv, "income_statement.csv", "text/csv", key='dl_income')
-            else:
-                st.info("No hay datos disponibles.")
-                
-        with tab2:
-            st.caption("Balance General")
-            df_balance = obtener_balance_yahoo(ticker_final)
-            if not df_balance.empty:
-                st.dataframe(df_balance, use_container_width=True, hide_index=True)
-                csv = df_balance.to_csv(index=False).encode('utf-8')
-                st.download_button("⬇️ Descargar CSV", csv, "balance_sheet.csv", "text/csv", key='dl_balance')
-            else:
-                st.info("No hay datos disponibles.")
+        st.subheader("📘 Income Statement")
+        df_income = obtener_income_yahoo(ticker_final)
 
-        with tab3:
-            st.caption("Flujo de Efectivo")
-            df_cash = obtener_cashflow_yahoo(ticker_final)
-            if not df_cash.empty:
-                st.dataframe(df_cash, use_container_width=True, hide_index=True)
-                csv = df_cash.to_csv(index=False).encode('utf-8')
-                st.download_button("⬇️ Descargar CSV", csv, "cash_flow.csv", "text/csv", key='dl_cash')
-            else:
-                st.info("No hay datos disponibles.")
-
-        st.markdown("---")
-
-
-        # ==============================
-        # NOTICIAS Y SENTIMIENTO
-        # ==============================
-        st.subheader("📰 Noticias y Sentimiento de Mercado")
-        
-        noticias = obtener_noticias_yf(ticker_final)
-        
-        if noticias:
-            col_news, col_sentiment = st.columns([3, 2])
-            
-            with col_news:
-                st.write("##### Titulares Recientes")
-                for n in noticias[:5]:
-                    titulo = n.get('title', 'Sin título')
-                    link = n.get('link', '#')
-                    publisher = n.get('publisher', 'Desconocido')
-                    # Manejar diferentes formatos de tiempo si es necesario
-                    st.markdown(f"- [{titulo}]({link}) <span style='color:gray; font-size:12px'>({publisher})</span>", unsafe_allow_html=True)
-            
-            with col_sentiment:
-                st.write("##### 🧠 Análisis de Sentimiento (IA)")
-                if GEMINI_DISPONIBLE:
-                    with st.spinner("Analizando sentimiento..."):
-                        sentimiento = analizar_sentimiento_gemini(ticker_final, noticias)
-                    
-                    if sentimiento:
-                        color_bg = "#2C3E50"
-                        if "POSITIVO" in sentimiento.upper():
-                            color_bg = "linear-gradient(135deg, #26A65B 0%, #2ECC71 100%)"
-                        elif "NEGATIVO" in sentimiento.upper():
-                            color_bg = "linear-gradient(135deg, #C0392B 0%, #E74C3C 100%)"
-                        elif "NEUTRAL" in sentimiento.upper():
-                            color_bg = "linear-gradient(135deg, #F39C12 0%, #F1C40F 100%)"
-                            
-                        st.markdown(f"""
-                            <div style='background: {color_bg}; padding: 20px; border-radius: 10px; color: white;'>
-                                {sentimiento.replace(chr(10), "<br>")}
-                            </div>
-                        """, unsafe_allow_html=True)
-                    else:
-                        error_msg = st.session_state.get('ai_error', 'Error desconocido')
-                        
-                        if error_msg and ('cuota' in error_msg.lower() or 'quota' in error_msg.lower() or 'exhausted' in error_msg.lower()):
-                            st.info("🤖 Límite de cuota alcanzado. Intenta más tarde.")
-                        elif error_msg and 'api_key' in error_msg.lower():
-                            st.warning("🤖 Error de configuración de API Key.")
-                        else:
-                            st.info("🤖 No se pudo generar el análisis de sentimiento.")
-                else:
-                    st.warning("Análisis de IA no disponible.")
-        else:
-            st.info("No se encontraron noticias recientes.")
+        if not df_income.empty:
+            st.dataframe(df_income, use_container_width=True, hide_index=True)
 
         st.markdown("---")
 
@@ -1595,14 +1024,14 @@ Dividend Yield: {info.get('dividendYield')}
 Financial Insight de Yahoo Finance: {financial_insights if financial_insights else "No disponible"}
 
 Genera un análisis profesional en máximo 300 palabras EN {idioma.upper()} con:
-1. Recomendación de inversión (Comprar/Vender/No comprar)
+1. Recomendación de inversión (Comprar/Mantener/Vender)
 2. Fortalezas clave
 3. Riesgos principales
 4. Valoración actual
 5. Perspectiva a corto plazo (3-6 meses)
 6. Perspectiva a largo plazo (1-3 años)
 
-Da la respuesta en formato plano, sin asteriscos ni formato markdown. Supón que está pensando en invertir, pero no sabe si comprar, vender, no comprar o no vender, haz diferentes recomendaciones en base de las suposiciones que más recomiendes según las métricas.
+Da la respuesta en formato plano, sin asteriscos ni formato markdown.
 """
 
             with st.spinner("Generando análisis individual..."):
@@ -1620,18 +1049,7 @@ Da la respuesta en formato plano, sin asteriscos ni formato markdown. Supón que
                     unsafe_allow_html=True
                 )
             else:
-                # Mostrar el error específico si está disponible
-                error_msg = st.session_state.get('ai_error', 'Error desconocido')
-                
-                if 'cuota' in error_msg.lower() or 'quota' in error_msg.lower() or 'exhausted' in error_msg.lower():
-                    st.info("🤖 **Análisis de IA no disponible:** El límite de requests de Gemini se ha alcanzado. Por favor, intenta más tarde.")
-                elif 'api_key' in error_msg.lower():
-                    st.error("🤖 **Error de configuración:** La API Key de Gemini no es válida. Por favor contacta al administrador.")
-                elif 'bloqueado' in error_msg.lower():
-                    st.warning(f"🤖 **Contenido bloqueado:** {error_msg}")
-                else:
-                    st.error(f"🤖 **Error al generar análisis:** {error_msg}")
-                    st.caption("Si el problema persiste, por favor contacta al administrador.")
+                st.info("🤖 **Análisis de IA no disponible:** El límite de requests de Gemini se ha alcanzado. Por favor, intenta más tarde.")
 
             st.markdown("---")
 
@@ -1687,7 +1105,7 @@ Genera un análisis comparativo en máximo 300 palabras EN {idioma.upper()} que 
 4. Valoración relativa (sobrevalorada/infravalorada vs peers)
 5. Recomendación comparativa
 
-Da la respuesta en formato plano, sin asteriscos ni formato markdown. Hasta el final recomienda de los peers y el ticker analizado, en que orden invertirías, enuméralos. Pon en mayúsculas la recomendación de comprar o vender. QUE SEA MUY CLARO. 
+Da la respuesta en formato plano, sin asteriscos ni formato markdown.
 """
 
                 with st.spinner("Generando análisis comparativo con peers..."):
@@ -1705,18 +1123,7 @@ Da la respuesta en formato plano, sin asteriscos ni formato markdown. Hasta el f
                         unsafe_allow_html=True
                     )
                 else:
-                    # Mostrar el error específico si está disponible
-                    error_msg = st.session_state.get('ai_error', 'Error desconocido')
-                    
-                    if 'cuota' in error_msg.lower() or 'quota' in error_msg.lower() or 'exhausted' in error_msg.lower():
-                        st.info("🤖 **Análisis comparativo de IA no disponible:** El límite de requests de Gemini se ha alcanzado. Por favor, intenta más tarde.")
-                    elif 'api_key' in error_msg.lower():
-                        st.error("🤖 **Error de configuración:** La API Key de Gemini no es válida. Por favor contacta al administrador.")
-                    elif 'bloqueado' in error_msg.lower():
-                        st.warning(f"🤖 **Contenido bloqueado:** {error_msg}")
-                    else:
-                        st.error(f"🤖 **Error al generar análisis comparativo:** {error_msg}")
-                        st.caption("Si el problema persiste, por favor contacta al administrador.")
+                    st.info("🤖 **Análisis comparativo de IA no disponible:** El límite de requests de Gemini se ha alcanzado. Por favor, intenta más tarde.")
 
         else:
             st.info("🤖 **Análisis de IA no disponible:** El servicio de Gemini AI está temporalmente deshabilitado debido al límite de requests. Todos los gráficos, métricas y datos financieros están disponibles y funcionando correctamente.")
